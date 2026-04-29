@@ -109,11 +109,9 @@ def check_setup() -> str:
         config = load_config()
         api_key = config.get("api_key", "")
     
-    # If no key and no ollama, show message and continue anyway (will fail later but continue)
     if not api_key and not ollama:
         print(f"\n{Colors.YELLOW}No API key found{Colors.END}")
-        print(f"Set OPENROUTER_API_KEY env or edit ~/.ever1-agent/config.json")
-        # Continue anyway - will work if user has env var set
+        print(f"Set OPENROUTER_API_KEY env or edit config.json")
     
     if api_key:
         provider = detect_provider(api_key)
@@ -126,34 +124,27 @@ def check_setup() -> str:
         print(f"{Colors.RED}No models found{Colors.END}")
         return ""
     
-    print(f"\n{Colors.CYAN}Available:{Colors.END} {len(models)} models")
+    # Auto-select first FREE model (nemotron usually free)
+    config = load_config()
+    saved_model = config.get("model", "")
     
-    # Show models nicely
-    free_models = [(k, v) for k, v in models.items() if v.get('free')]
-    paid_models = [(k, v) for k, v in models.items() if not v.get('free')]
+    # Try to use a free model automatically
+    for key, info in models.items():
+        if info.get("free"):
+            config["model"] = key
+            config["model_id"] = info.get("id", key)
+            save_config(config)
+            print(f"{Colors.GREEN}✓ Model: {key} (free){Colors.END}")
+            return key
     
-    print(f"\n{Colors.CYAN}═══ FREE Models ═══{Colors.END}")
-    for key, info in free_models[:6]:
-        print(f"  {Colors.GREEN}•{Colors.END} {key}")
-    
-    print(f"\n{Colors.CYAN}═══ Paid Models ═══{Colors.END}")
-    for key, info in paid_models[:4]:
-        print(f"  {Colors.BLUE}•{Colors.END} {key}")
-    
-    current = load_config().get("model", "")
-    
-    print(f"\n{Colors.CYAN}Use arrow keys to select:{Colors.END}")
-    choice = select_model_arrows(models, current) if current else list(models.keys())[0]
-    
-    if choice and choice in models:
-        config = load_config()
-        config["model"] = choice
-        config["model_id"] = models[choice].get("id", choice)
-        save_config(config)
-        print(f"\n{Colors.GREEN}✓ Selected: {choice}{Colors.END}")
-        return choice
-    
-    return current
+    # Fallback to first model
+    first_key = list(models.keys())[0]
+    first_info = models[first_key]
+    config["model"] = first_key
+    config["model_id"] = first_info.get("id", first_key)
+    save_config(config)
+    print(f"{Colors.CYAN}Model: {first_key}{Colors.END}")
+    return first_key
 
 
 def main():
