@@ -17,10 +17,9 @@ from config import (load_config, save_config, load_state, get_relevant_learnings
 
 def print_banner():
     print("""
-╔═══════════════════════════════╗
-║      EVER-1 AI Agent          ║
-║  Self-Learning AI             ║
-╚═══════════════════════════════╝
+================================================
+           EVER-1 AI AGENT
+================================================
 """)
 
 

@@ -10,9 +10,9 @@ BIN="$HOME/.local/bin"
 mkdir -p "$DIR" "$BIN"
 
 echo ""
-echo "╔═══════════════════════════════╗"
-echo "║      EVER-1 AI Agent          ║"
-echo "╚═══════════════════════════════╝"
+echo "=============================================="
+echo "           EVER-1 AI AGENT                    "
+echo "=============================================="
 echo "Installing..."
 
 # Download files
@@ -37,24 +37,24 @@ with open("$DIR/config.json", "w") as f:
     json.dump(cfg, f)
 PYEOF
 
-# Create everai command IN TERMUX DEFAULT PATH
-echo '#!/bin/bash
-cd ~/.ever1-agent
-python3 main.py' > /data/data/com.termux/files/home/bin/everai
-chmod +x /data/data/com.termux/files/home/bin/everai
-
-# Also in ~/.local/bin
+# Create everai command in both possible locations
 echo '#!/bin/bash
 cd ~/.ever1-agent
 python3 main.py' > "$BIN/everai"
 chmod +x "$BIN/everai"
 
-# Add to PATH for this session
-export PATH="/data/data/com.termux/files/home/bin:$PATH"
+# Termux default bin
+if [ -d "/data/data/com.termux/files/home/bin" ]; then
+    echo '#!/bin/bash
+cd ~/.ever1-agent
+python3 main.py' > /data/data/com.termux/files/home/bin/everai
+    chmod +x /data/data/com.termux/files/home/bin/everai
+fi
 
 echo ""
-echo "Run: everai"
-echo "Or: python3 ~/.ever1-agent/main.py"
+echo "=============================================="
+echo "Done! Run: everai"
+echo "=============================================="
 echo ""
 
 cd "$DIR"
