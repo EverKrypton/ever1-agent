@@ -282,41 +282,41 @@ class Ever1Agent:
     def chat(self, user_input: str, stream: bool = True) -> Generator[str, None, None]:
         self.interrupted = False
         
-        self.action.set_action("Analyzing")
+        # Show thinking briefly
+        self.action.set_action("Thinking")
+        self.action.start("Thinking")
+        time.sleep(0.5)  # Brief think
+        self.action.stop()
+        
         cmd_result = self._detect_command(user_input)
         
         if cmd_result.get("used"):
-            self.action.start(cmd_result.get("action", "executing"))
-            
             if cmd_result.get("tool"):
+                self.action.set_action(cmd_result.get("action", "executing"))
+                self.action.start(cmd_result.get("action", "executing"))
+                
                 result = self._execute_tool(cmd_result.get("tool"), cmd_result)
+                self.action.stop()
                 
                 if result.get("success"):
-                    self.action.stop()
                     yield f"{Colors.GREEN}✓ Done{Colors.END}\n{result.get('output', '')}\n"
                     add_learning(cmd_result.get("action"), user_input[:100], True, 9)
                 else:
-                    self.action.stop()
                     yield f"{Colors.RED}✗ Error{Colors.END}\n{result.get('error', '')}\n"
                     add_learning(cmd_result.get("action"), user_input[:100], False, 4)
                 
                 self.conversation.append([user_input, result.get("output", result.get("error", ""))])
                 self._save_state()
                 return
-            
-            self.action.stop()
         
-        self.action.start("Thinking")
-        
-        # Route based on provider
-        if self.provider in ["openrouter", "openai"]:
-            yield from self._api_chat(user_input, stream=stream)
-        elif self.provider == "anthropic":
-            yield from self._anthropic_chat(user_input, stream=stream)
-        else:
-            yield from self._api_chat(user_input, stream=stream)
+        # Call API
+        yield from self._api_chat(user_input, stream=stream)
     
     def _api_chat(self, user_input: str, stream: bool = True) -> Generator[str, None, None]:
+        """Chat with OpenAI-compatible API"""
+        sys.stdout.write(f"{Colors.CYAN}Processing...{Colors.END}\r")
+        sys.stdout.flush()
+        
         messages = self._build_messages(user_input)
         
         chat_url = get_chat_url(self.provider)
@@ -336,7 +336,6 @@ class Ever1Agent:
         }
         
         try:
-            self.action.set_action("Sending")
             req = Request(
                 chat_url,
                 data=json.dumps(payload).encode("utf-8"),
@@ -346,47 +345,44 @@ class Ever1Agent:
             
             assistant_content = []
             chunk_count = 0
+            done = False
             
-            if stream:
-                self.action.set_action("Streaming")
-                with urlopen(req, timeout=120) as response:
-                    for line in response:
-                        if self.interrupted:
-                            yield f"\n{Colors.YELLOW}⚠ Interrupted{Colors.END}"
-                            return
-                        
-                        line = line.decode("utf-8")
-                        if line.startswith("data: "):
-                            data_str = line[6:].strip()
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                data = json.loads(data_str)
-                                delta = data.get("choices", [{}])[0].get("delta", {})
-                                content_piece = delta.get("content", "")
-                                if content_piece:
-                                    assistant_content.append(content_piece)
-                                    yield content_piece
-                                    chunk_count += 1
-                                    if chunk_count % 10 == 0:
-                                        self.progress.show(chunk_count, 50, "Loading")
-                            except json.JSONDecodeError:
-                                continue
-                                
-                                usage = data.get("usage", {})
-                                self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
-            else:
-                with urlopen(req, timeout=120) as response:
-                    result = json.loads(response.read().decode("utf-8"))
-                    content = result["choices"][0]["message"]["content"]
-                    assistant_content.append(content)
+            with urlopen(req, timeout=120) as response:
+                for line in response:
+                    if self.interrupted:
+                        yield f"\n{Colors.YELLOW}⚠ Interrupted{Colors.END}"
+                        return
                     
-                    usage = result.get("usage", {})
-                    self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
-                    yield content
+                    line = line.decode("utf-8")
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            done = True
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            delta = data.get("choices", [{}])[0].get("delta", {})
+                            content_piece = delta.get("content", "")
+                            if content_piece:
+                                assistant_content.append(content_piece)
+                                yield content_piece
+                                chunk_count += 1
+                                
+                                # Show single progress line - clears each time
+                                pct = min(100, chunk_count * 5)
+                                bar = "●" * min(8, pct // 12) + "○" * max(0, 8 - pct // 12)
+                                sys.stdout.write(f"\r{Colors.CYAN}[{bar}]{Colors.END} {pct}%      \r")
+                                sys.stdout.flush()
+                                
+                            usage = data.get("usage", {})
+                            self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+                        except json.JSONDecodeError:
+                            continue
             
-            self.progress.show(50, 50, "Done")
-            print()
+            # Clear line and show complete
+            total = self.tokens.session_prompt_tokens + self.tokens.session_completion_tokens
+            cost = f" ${self.tokens.total_cost:.4f}" if self.tokens.total_cost > 0 else ""
+            print(f"\r{Colors.GREEN}✓ Done{Colors.END} │ tokens: {total}{cost}      ")
             
             response_text = "".join(assistant_content)
             evaluation = self._self_evaluate(response_text)
