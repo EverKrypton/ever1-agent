@@ -246,13 +246,17 @@ def handle_command(cmd: str, agent: Ever1Agent):
             print(f"{Colors.RED}No models{Colors.END}")
             return
         
-        print(f"\n{Colors.CYAN}Models ({len(models)}):{Colors.END}")
+        print(f"\n{Colors.CYAN}Available Models:{Colors.END}")
         
-        # Just show models, no arrow selection
-        for key, info in list(models.items())[:15]:
+        # Show models in simple list (no arrows)
+        model_list = list(models.keys())[:20]
+        for i, key in enumerate(model_list):
+            info = models[key]
             free = f" {Colors.GREEN}[FREE]{Colors.END}" if info.get("free") else ""
-            current = " ←" if key == agent.model_key else ""
-            print(f"  {Colors.BLUE}{key}{Colors.END}{free}{current}")
+            current = " ← current" if key == agent.model_key else ""
+            print(f"  {i+1}. {key}{free}{current}")
+        
+        print(f"\n{Colors.CYAN}Switch: /model <name>{Colors.END}")
     
     elif cmd_clean.startswith("/model "):
         key = cmd[7:].strip()

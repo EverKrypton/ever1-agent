@@ -37,13 +37,25 @@ with open("$DIR/config.json", "w") as f:
     json.dump(cfg, f)
 PYEOF
 
-# Create everai command
+# Create everai command IN TERMUX DEFAULT PATH
+echo '#!/bin/bash
+cd ~/.ever1-agent
+python3 main.py' > /data/data/com.termux/files/home/bin/everai
+chmod +x /data/data/com.termux/files/home/bin/everai
+
+# Also in ~/.local/bin
 echo '#!/bin/bash
 cd ~/.ever1-agent
 python3 main.py' > "$BIN/everai"
 chmod +x "$BIN/everai"
 
+# Add to PATH for this session
+export PATH="/data/data/com.termux/files/home/bin:$PATH"
+
 echo ""
-echo "Running Ever-1..."
+echo "Run: everai"
+echo "Or: python3 ~/.ever1-agent/main.py"
+echo ""
+
 cd "$DIR"
 python3 main.py
