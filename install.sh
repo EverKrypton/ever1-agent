@@ -7,19 +7,18 @@ echo "╚══════════════╝"
 DIR="$HOME/.ever1-agent"
 mkdir -p "$DIR"
 
-# Download files
+# Download files with cache bypass
 echo "Downloading..."
-curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/main.py" -o "$DIR/main.py"
-curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/client.py" -o "$DIR/client.py"  
-curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/config.py" -o "$DIR/config.py"
-curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/tools.py" -o "$DIR/tools.py"
+curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/main.py?$(date +%s)" -o "$DIR/main.py"
+curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/client.py?$(date +%s)" -o "$DIR/client.py"  
+curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/config.py?$(date +%s)" -o "$DIR/config.py"
+curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/tools.py?$(date +%s)" -o "$DIR/tools.py"
 
-# Create command
-mkdir -p "$HOME/.local/bin"
-echo '#!/bin/bash
-cd ~/.ever1-agent; python3 main.py' > "$HOME/.local/bin/everai"
-chmod +x "$HOME/.local/bin/everai"
+# Fix DIM color if missing
+if ! grep -q "DIM.*=" "$DIR/client.py"; then
+    sed -i "s/BOLD = '\\\\033\[1m'/BOLD = '\\\\033[1m'\n    DIM = '\\\\033[2m'/" "$DIR/client.py"
+fi
 
-# Run
+echo "Done!, running..."
 cd "$DIR"
 python3 main.py
