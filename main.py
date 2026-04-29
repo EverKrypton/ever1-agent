@@ -224,7 +224,10 @@ def handle_command(cmd: str, agent: Ever1Agent):
     
     elif cmd_clean == "/models":
         api_key = check_api_key()
-        models = fetch_models(api_key, detect_provider(api_key))
+        config = load_config()
+        api_key = api_key or config.get("api_key", "")
+        provider = detect_provider(api_key)
+        models = fetch_models(api_key, provider)
         
         if not models:
             print(f"{Colors.RED}No models{Colors.END}")
@@ -232,8 +235,11 @@ def handle_command(cmd: str, agent: Ever1Agent):
         
         print(f"\n{Colors.CYAN}Models ({len(models)}):{Colors.END}")
         
-        # Use arrow selection
-        select_model_arrows(models, agent.model_key)
+        # Just show models, no arrow selection
+        for key, info in list(models.items())[:15]:
+            free = f" {Colors.GREEN}[FREE]{Colors.END}" if info.get("free") else ""
+            current = " ←" if key == agent.model_key else ""
+            print(f"  {Colors.BLUE}{key}{Colors.END}{free}{current}")
     
     elif cmd_clean.startswith("/model "):
         key = cmd[7:].strip()
