@@ -1,8 +1,8 @@
 #!/bin/bash
 # Ever-1 - Direct Install
-# Usage: curl -sL url | bash -s <api_key>
+# Usage: curl -sL url | bash [-s api_key]
 
-API_KEY="${1:-}"
+API_KEY="${1:-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}"
 
 DIR="$HOME/.ever1-agent"
 mkdir -p "$DIR"
@@ -23,9 +23,8 @@ if 'DIM' not in c:
         f.write(c)
 "
 
-# Save API key in config if provided
-if [ -n "$API_KEY" ] && [ "$API_KEY" != "-" ]; then
-    python3 << PYEOF
+# Save API key - default to the one user gave or prompt for one
+python3 << PYEOF
 import json, os
 cfg = {
     "api_key": "$API_KEY",
@@ -36,22 +35,14 @@ os.makedirs("$DIR", exist_ok=True)
 with open("$DIR/config.json", "w") as f:
     json.dump(cfg, f, indent=2)
 PYEOF
-fi
 
 # Create everai command
 mkdir -p "$HOME/.local/bin"
 echo '#!/bin/bash
 cd ~/.ever1-agent
-python3 main.py "$@"' > "$HOME/.local/bin/everai"
+python3 main.py' > "$HOME/.local/bin/everai"
 chmod +x "$HOME/.local/bin/everai"
 
-# Export PATH for this session
-export PATH="$PATH:$HOME/.local/bin"
-
-# Run with API key as argument if provided
+# Run
 cd "$DIR"
-if [ -n "$API_KEY" ] && [ "$API_KEY" != "-" ]; then
-    python3 main.py "$API_KEY"
-else
-    python3 main.py
-fi
+python3 main.py

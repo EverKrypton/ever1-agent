@@ -109,27 +109,11 @@ def check_setup() -> str:
         config = load_config()
         api_key = config.get("api_key", "")
     
+    # If no key and no ollama, show message and continue anyway (will fail later but continue)
     if not api_key and not ollama:
-        print(f"\n{Colors.YELLOW}Enter API key:{Colors.END}")
-        print(f"{Colors.DIM}(OpenRouter/OpenAI/Anthropic){Colors.END}")
-        
-        # Read from command line args if available
-        import sys
-        if len(sys.argv) > 1:
-            new_key = sys.argv[1]
-        else:
-            try:
-                new_key = input(f"\n{Colors.GREEN}Key{Colors.END} > ").strip()
-            except EOFError:
-                new_key = ""
-        
-        if new_key:
-            provider = detect_provider(new_key)
-            config = load_config()
-            config["api_key"] = new_key
-            config["provider"] = provider
-            save_config(config)
-            print(f"{Colors.GREEN}✓ Saved ({provider}){Colors.END}\n")
+        print(f"\n{Colors.YELLOW}No API key found{Colors.END}")
+        print(f"Set OPENROUTER_API_KEY env or edit ~/.ever1-agent/config.json")
+        # Continue anyway - will work if user has env var set
     
     if api_key:
         provider = detect_provider(api_key)
