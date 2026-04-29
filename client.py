@@ -2,22 +2,25 @@ import os
 import sys
 import json
 import time
-import threading
 from datetime import datetime
-from typing import Generator
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 try:
     from config import (load_config, save_config, detect_provider, get_provider_info,
-                       load_state, save_state, load_memory, save_memory, add_learning, 
-                       get_relevant_learnings, load_queue, get_next_task, add_to_queue, 
+                       load_state, save_state, add_learning, get_relevant_learnings,
+                       load_queue, get_next_task, add_to_queue, 
                        get_available_models, get_chat_url, PROVIDERS)
 except ImportError:
     from .config import (load_config, save_config, detect_provider, get_provider_info,
-                       load_state, save_state, load_memory, save_memory, add_learning,
-                       get_relevant_learnings, load_queue, get_next_task, add_to_queue,
-                       get_available_models, get_chat_url, PROVIDERS)
+                        load_state, save_state, add_learning, get_relevant_learnings,
+                        load_queue, get_next_task, add_to_queue,
+                        get_available_models, get_chat_url, PROVIDERS)
+
+try:
+    from tools import ToolExecutor
+except ImportError:
+    from .tools import ToolExecutor
 
 
 class Colors:
@@ -26,7 +29,6 @@ class Colors:
     GREEN = '\033[32m'
     YELLOW = '\033[33m'
     BLUE = '\033[34m'
-    MAGENTA = '\033[35m'
     CYAN = '\033[36m'
     WHITE = '\033[37m'
     GRAY = '\033[90m'
@@ -34,86 +36,73 @@ class Colors:
     END = '\033[0m'
 
 
+class Emoji:
+    THINKING = "🤔"
+    PROCESSING = "⚙️"
+    DONE = "✅"
+    ERROR = "❌"
+    SPEAK = "🔊"
+    VISION = "🖼️"
+    CODE = "⚡"
+    FILE = "📄"
+    VISION = "🖼️"
+
+
 class ActionIndicator:
+    """Simple action indicator with single state"""
     def __init__(self):
-        self.actions = ["Thinking", "Processing", "Executing", "Learning"]
-        self.current_action = "Starting"
-        self.frames = ["●○○○○", "○○●○○", "○○○●○", "○○○○●"]
+        self.current_action = ""
+        self.frames = ["◐", "◑", "◒", "◓"]
         self.current = 0
         self.running = False
-        self.thread = None
         
-    def set_action(self, action: str):
-        self.current_action = action
-        
-    def start(self, action: str = "Processing"):
-        self.running = True
+    def start(self, action: str):
         self.current_action = action
         self.current = 0
+        self.running = True
         
-        def animate():
-            while self.running:
-                sys.stdout.write(f"\r{Colors.CYAN}{self.current_action} {self.frames[self.current]}{Colors.END}")
-                sys.stdout.flush()
-                self.current = (self.current + 1) % len(self.frames)
-                time.sleep(0.12)
-        
-        self.thread = threading.Thread(target=animate, daemon=True)
-        self.thread.start()
+    def update(self):
+        if not self.running:
+            return ""
+        self.current = (self.current + 1) % len(self.frames)
+        return f"{self.frames[self.current]}"
     
     def stop(self):
         self.running = False
-        if self.thread:
-            time.sleep(0.15)
-        sys.stdout.write("\r" + " " * 30 + "\r")
-        sys.stdout.flush()
+        self.current_action = ""
 
 
 class ProgressBar:
-    def __init__(self, width: int = 25):
+    def __init__(self, width: int = 8):
         self.width = width
     
-    def show(self, current: int, total: int, prefix: str = ""):
-        if total == 0:
-            percent = 100
-            filled = self.width
-        else:
-            percent = min(100, int((current / total) * 100))
-            filled = int(self.width * current / total) if total > 0 else 0
-        
-        bar = "●" * filled + "○" * (self.width - filled)
-        prefix_text = f"{Colors.CYAN}{prefix}{Colors.END}" if prefix else ""
-        sys.stdout.write(f"\r{prefix_text}[{Colors.CYAN}{bar}{Colors.END}] {Colors.CYAN}{percent}%{Colors.END}")
-        sys.stdout.flush()
+    def show(self, pct: int) -> str:
+        filled = "●" * min(self.width, int(pct / 12.5))
+        empty = "○" * max(0, self.width - int(pct / 12.5))
+        return f"[{filled}{empty}] {pct}%"
 
 
 class TokenTracker:
     def __init__(self):
-        self.session_prompt_tokens = 0
-        self.session_completion_tokens = 0
-        self.total_cost = 0.0
-        self.price_input = 0.0
-        self.price_output = 0.0
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.cost = 0.0
+        self.price_in = 0.0
+        self.price_out = 0.0
     
-    def set_prices(self, price_in: float, price_out: float):
-        self.price_input = price_in
-        self.price_output = price_out
+    def set_prices(self, p_in: float, p_out: float):
+        self.price_in = p_in
+        self.price_out = p_out
     
-    def update(self, prompt_tokens: int = 0, completion_tokens: int = 0):
-        self.session_prompt_tokens += prompt_tokens
-        self.session_completion_tokens += completion_tokens
-        
-        cost = (prompt_tokens * self.price_input / 1000) + \
-               (completion_tokens * self.price_output / 1000)
-        self.total_cost += cost
+    def update(self, prompt: int = 0, completion: int = 0):
+        self.prompt_tokens += prompt
+        self.completion_tokens += completion
+        self.cost = (prompt * self.price_in / 1000) + (completion * self.price_out / 1000)
     
-    def get_display(self) -> str:
-        total = self.session_prompt_tokens + self.session_completion_tokens
-        cost_str = f"${self.total_cost:.4f}" if self.total_cost > 0 else "$0.00"
-        
-        if self.price_input > 0:
-            return f"tokens: {total} | cost: {cost_str}"
-        return f"tokens: {total}"
+    def display(self) -> str:
+        total = self.prompt_tokens + self.completion_tokens
+        cost_str = f" ${self.cost:.4f}" if self.cost > 0 else ""
+        return f"tokens: {total}{cost_str}"
 
 
 class Ever1Agent:
@@ -141,12 +130,12 @@ class Ever1Agent:
         self.progress = ProgressBar()
         self.tokens = TokenTracker()
         
+        self.tools = ToolExecutor()
         self.interrupted = False
         
         self._ensure_model_loaded()
     
     def _ensure_model_loaded(self):
-        """Ensure model is loaded - get from API if not set"""
         if not self.model_id:
             models = get_available_models(self.api_key)
             
@@ -159,7 +148,6 @@ class Ever1Agent:
                     self.tokens.set_prices(info.get("price_input", 0), info.get("price_output", 0))
                     return
             
-            # Try first available model
             if models:
                 first_key = list(models.keys())[0]
                 first_info = models[first_key]
@@ -170,7 +158,7 @@ class Ever1Agent:
                 save_config(self.config)
                 self.tokens.set_prices(first_info.get("price_input", 0), first_info.get("price_output", 0))
     
-    def _build_messages(self, user_input: str) -> list:
+    def _build_messages(self, user_input: str, image_data: str = None) -> list:
         messages = []
         
         relevant = get_relevant_learnings()
@@ -184,28 +172,49 @@ class Ever1Agent:
                 messages.append({"role": "user", "content": conv[0]})
                 messages.append({"role": "assistant", "content": conv[1]})
         
-        messages.append({"role": "user", "content": user_input})
+        if image_data:
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_input},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}
+                ]
+            })
+        else:
+            messages.append({"role": "user", "content": user_input})
+        
         return messages
     
     def _detect_command(self, user_input: str) -> dict:
         cmd_lower = user_input.lower().strip()
-        result = {"used": False, "action": "conversation"}
+        result = {"used": False, "action": "chat"}
         
+        # Tool commands
         if cmd_lower.startswith("/exec ") or "run code" in cmd_lower:
-            code = user_input[6:].strip() if user_input.startswith("/exec ") else user_input
-            result = {"used": True, "action": "coding", "tool": "execute", "code": code}
+            code = user_input[6:].strip() or user_input
+            result = {"used": True, "action": "code", "tool": "execute", "code": code}
         
-        elif cmd_lower.startswith("/read ") or "read file" in cmd_lower:
-            path = user_input[6:].strip()
-            result = {"used": True, "action": "reading", "tool": "read_file", "path": path}
+        elif cmd_lower.startswith("/read ") or "read" in cmd_lower:
+            path = cmd_lower.replace("/read", "").replace("read", "").strip()
+            result = {"used": True, "action": "file", "tool": "read_file", "path": path}
         
         elif cmd_lower.startswith("/write ") and "=" in user_input:
             parts = user_input[7:].split("=", 1)
-            result = {"used": True, "action": "writing", "tool": "write_file", "path": parts[0].strip(), "content": parts[1].strip()}
+            result = {"used": True, "action": "file", "tool": "write_file", "path": parts[0].strip(), "content": parts[1].strip()}
         
         elif cmd_lower.startswith("/ls ") or "list files" in cmd_lower:
-            path = user_input[4:].strip() or "."
-            result = {"used": True, "action": "listing", "tool": "list_files", "path": path}
+            path = cmd_lower.replace("/ls", "").replace("list files", "").strip() or "."
+            result = {"used": True, "action": "file", "tool": "list_files", "path": path}
+        
+        elif "/speak" in cmd_lower or "speak" in cmd_lower:
+            text = user_input.replace("/speak", "").replace("speak", "").strip()
+            result = {"used": True, "action": "speak", "tool": "speak", "text": text}
+        
+        elif "/vision" in cmd_lower or "analyze" in cmd_lower:
+            result = {"used": True, "action": "vision", "tool": "analyze_image", "path": ""}
+        
+        elif "/help" in cmd_lower:
+            result = {"used": True, "action": "help", "tool": "help"}
         
         return result
     
@@ -213,111 +222,142 @@ class Ever1Agent:
         result = {"success": False, "output": "", "error": ""}
         
         if tool == "execute":
-            import subprocess
-            try:
-                code = params.get("code", "")
-                lang = "python" if "python" in code else "bash"
-                
-                if lang == "python":
-                    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
-                else:
-                    proc = subprocess.run(code, shell=True, capture_output=True, text=True, timeout=30)
-                
-                result["success"] = proc.returncode == 0
-                result["output"] = proc.stdout if proc.stdout else proc.stderr
-                
-            except Exception as e:
-                result["error"] = str(e)
-        
+            result = self.tools.execute_code(params.get("code", ""))
         elif tool == "read_file":
-            try:
-                path = os.path.expanduser(params.get("path", ""))
-                if os.path.exists(path):
-                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                        result["output"] = f.read(5000)
-                        result["success"] = True
-                else:
-                    result["error"] = f"File not found: {path}"
-            except Exception as e:
-                result["error"] = str(e)
-        
+            result = self.tools.read_file(params.get("path", ""))
         elif tool == "write_file":
-            try:
-                path = os.path.expanduser(params.get("path", ""))
-                content = params.get("content", "")
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w") as f:
-                    f.write(content)
-                result["success"] = True
-                result["output"] = f"Written to {path}"
-            except Exception as e:
-                result["error"] = str(e)
-        
+            result = self.tools.write_file(params.get("path", ""), params.get("content", ""))
         elif tool == "list_files":
-            try:
-                from pathlib import Path
-                path = os.path.expanduser(params.get("path", "."))
-                p = Path(path)
-                files = [str(f.name) for f in p.glob("*")][:20]
-                result["output"] = "\n".join(files)
-                result["success"] = True
-            except Exception as e:
-                result["error"] = str(e)
+            result = self.tools.list_files(params.get("path", "."))
+        elif tool == "analyze_image":
+            result = self.tools.analyze_image(params.get("path", ""))
+        elif tool == "speak":
+            result = self.tools.speak(params.get("text", ""), self.config.get("tts_engine", "pyttsx3"))
         
         return result
     
     def _self_evaluate(self, response: str) -> dict:
         score = 7
-        notes = "Good response"
-        
+        notes = "Good"
         if len(response) < 20:
             score = 5
-            notes = "Response too brief"
-        elif "don't know" in response.lower() or "cannot" in response.lower():
+            notes = "Short"
+        elif "don't" in response.lower() or "cannot" in response.lower():
             score = 6
             notes = "Uncertain"
-        
         return {"score": score, "notes": notes}
     
-    def chat(self, user_input: str, stream: bool = True) -> Generator[str, None, None]:
+    def chat(self, user_input: str, stream: bool = True, image_path: str = None) -> str:
+        """Main chat method - returns full response"""
         self.interrupted = False
         
-        # Show thinking briefly
-        self.action.set_action("Thinking")
+        # Show thinking
         self.action.start("Thinking")
-        time.sleep(0.5)  # Brief think
-        self.action.stop()
         
         cmd_result = self._detect_command(user_input)
         
         if cmd_result.get("used"):
-            if cmd_result.get("tool"):
-                self.action.set_action(cmd_result.get("action", "executing"))
-                self.action.start(cmd_result.get("action", "executing"))
-                
-                result = self._execute_tool(cmd_result.get("tool"), cmd_result)
-                self.action.stop()
-                
-                if result.get("success"):
-                    yield f"{Colors.GREEN}✓ Done{Colors.END}\n{result.get('output', '')}\n"
-                    add_learning(cmd_result.get("action"), user_input[:100], True, 9)
-                else:
-                    yield f"{Colors.RED}✗ Error{Colors.END}\n{result.get('error', '')}\n"
-                    add_learning(cmd_result.get("action"), user_input[:100], False, 4)
-                
-                self.conversation.append([user_input, result.get("output", result.get("error", ""))])
+            self.action.stop()
+            self.action.start(cmd_result.get("action", "Processing"))
+            
+            tool = cmd_result.get("tool")
+            
+            if tool == "help":
+                tools = self.tools.get_available_tools()
+                output = f"📱 *Ever-1 Tools*\n\n"
+                for t in tools:
+                    output += f"{t['icon']} /{t['name']}: {t['desc']}\n"
+                add_learning("tool", "help", True, 10)
+                self.conversation.append([user_input, output])
                 self._save_state()
-                return
+                return output
+            
+            if tool == "analyze_image":
+                self.action.start("Analyze")
+                img_result = self.tools.analyze_image(image_path or cmd_result.get("path", ""))
+                if img_result.get("success") and img_result.get("data"):
+                    return self._vision_chat(user_input, img_result["data"], img_result.get("mime", "image/jpeg"))
+                else:
+                    self.action.stop()
+                    return f"❌ {img_result.get('error', 'Could not analyze image')}"
+            
+            if tool == "speak":
+                result = self._execute_tool(tool, cmd_result)
+                self.action.stop()
+                return f"✅ Spoke: {cmd_result.get('text', '')[:50]}..." if result.get("success") else f"❌ {result.get('error', '')}"
+            
+            result = self._execute_tool(tool, cmd_result)
+            self.action.stop()
+            
+            if result.get("success"):
+                add_learning(tool, user_input[:100], True, 9)
+                output = result.get("output", "Done")
+                self.conversation.append([user_input, output])
+                self._save_state()
+                return f"✅ {output}"
+            else:
+                add_learning(tool, user_input[:100], False, 4)
+                return f"❌ {result.get('error', 'Error')}"
         
-        # Call API
-        yield from self._api_chat(user_input, stream=stream)
+        # Regular chat
+        return self._api_chat(user_input, stream, image_path)
     
-    def _api_chat(self, user_input: str, stream: bool = True) -> Generator[str, None, None]:
-        """Chat with OpenAI-compatible API"""
-        sys.stdout.write(f"{Colors.CYAN}Processing...{Colors.END}\r")
-        sys.stdout.flush()
+    def _vision_chat(self, user_input: str, image_data: str, mime: str) -> str:
+        """Chat with image"""
+        self.action.start("Vision")
         
-        messages = self._build_messages(user_input)
+        messages = self._build_messages(user_input, image_data)
+        
+        chat_url = get_chat_url(self.provider)
+        
+        # Check if model supports vision
+        provider_info = get_provider_info(self.provider)
+        vision_models = provider_info.get("vision_models", [])
+        
+        # Use first available model if current doesn't support vision
+        model_id = self.model_id
+        if not any(vm in model_id.lower() for vm in ["vision", "gpt-4o", "opus", "sonnet"]):
+            models = get_available_models(self.api_key)
+            for k, v in models.items():
+                if v.get("vision"):
+                    model_id = v.get("id", k)
+                    break
+        
+        payload = {
+            "model": model_id,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": 2048
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            req = Request(chat_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+            
+            with urlopen(req, timeout=60) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                content = result["choices"][0]["message"]["content"]
+                
+                usage = result.get("usage", {})
+                self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+                
+                self.action.stop()
+                add_learning("vision", user_input[:100], True, 9)
+                self.conversation.append([user_input, content])
+                self._save_state()
+                return content
+                
+        except Exception as e:
+            self.action.stop()
+            return f"❌ Error: {str(e)}"
+    
+    def _api_chat(self, user_input: str, stream: bool, image_data: str = None) -> str:
+        """API chat"""
+        messages = self._build_messages(user_input, image_data)
         
         chat_url = get_chat_url(self.provider)
         
@@ -332,131 +372,56 @@ class Ever1Agent:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://ever1.local",
-            "X-Title": "Ever-1 Agent"
+            "X-Title": "Ever-1"
         }
         
         try:
-            req = Request(
-                chat_url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
+            req = Request(chat_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
             
-            assistant_content = []
-            chunk_count = 0
-            done = False
+            response_text = ""
             
             with urlopen(req, timeout=120) as response:
                 for line in response:
                     if self.interrupted:
-                        yield f"\n{Colors.YELLOW}⚠ Interrupted{Colors.END}"
-                        return
+                        return "⚠ Interrupted"
                     
                     line = line.decode("utf-8")
                     if line.startswith("data: "):
                         data_str = line[6:].strip()
                         if data_str == "[DONE]":
-                            done = True
                             break
                         try:
                             data = json.loads(data_str)
                             delta = data.get("choices", [{}])[0].get("delta", {})
-                            content_piece = delta.get("content", "")
-                            if content_piece:
-                                assistant_content.append(content_piece)
-                                yield content_piece
-                                chunk_count += 1
-                                
-                                # Show single progress line - clears each time
-                                pct = min(100, chunk_count * 5)
-                                bar = "●" * min(8, pct // 12) + "○" * max(0, 8 - pct // 12)
-                                sys.stdout.write(f"\r{Colors.CYAN}[{bar}]{Colors.END} {pct}%      \r")
-                                sys.stdout.flush()
-                                
+                            content = delta.get("content", "")
+                            if content:
+                                response_text += content
+                            
                             usage = data.get("usage", {})
                             self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
-                        except json.JSONDecodeError:
+                        except:
                             continue
             
-            # Clear line and show complete
-            total = self.tokens.session_prompt_tokens + self.tokens.session_completion_tokens
-            cost = f" ${self.tokens.total_cost:.4f}" if self.tokens.total_cost > 0 else ""
-            print(f"\r{Colors.GREEN}✓ Done{Colors.END} │ tokens: {total}{cost}      ")
+            if not response_text:
+                # Non-streaming fallback
+                req = Request(chat_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                with urlopen(req, timeout=60) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                    response_text = result["choices"][0]["message"]["content"]
+                    
+                    usage = result.get("usage", {})
+                    self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
             
-            response_text = "".join(assistant_content)
             evaluation = self._self_evaluate(response_text)
-            add_learning("conversation", user_input[:100], evaluation["score"] > 6, evaluation["score"], evaluation["notes"])
+            add_learning("chat", user_input[:100], evaluation["score"] > 6, evaluation["score"], evaluation["notes"])
             
             self.conversation.append([user_input, response_text])
             self._save_state()
             
-        except HTTPError as e:
-            try:
-                error_body = e.read().decode()
-                error_data = json.loads(error_body)
-                yield f"\n{Colors.RED}Error: {error_data.get('error', {}).get('message', str(e))}{Colors.END}\n"
-            except:
-                yield f"\n{Colors.RED}Error: HTTP {e.code}{Colors.END}\n"
-        except Exception as e:
-            yield f"\n{Colors.RED}Error: {str(e)}{Colors.END}\n"
-    
-    def _anthropic_chat(self, user_input: str, stream: bool = True) -> Generator[str, None, None]:
-        messages = self._build_messages(user_input)
-        
-        chat_url = get_chat_url("anthropic")
-        
-        system_msg = messages[0]["content"] if messages[0]["role"] == "system" else ""
-        
-        anthropic_messages = []
-        for m in messages[1:]:
-            if m["role"] in ["user", "assistant"]:
-                anthropic_messages.append(m)
-        
-        payload = {
-            "model": self.model_id,
-            "messages": anthropic_messages,
-            "max_tokens": 4096,
-            "system": system_msg,
-        }
-        
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json"
-        }
-        
-        try:
-            self.action.set_action("Sending")
-            req = Request(
-                chat_url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
-            
-            assistant_content = []
-            
-            with urlopen(req, timeout=120) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                content = result.get("content", [{}])[0].get("text", "")
-                assistant_content.append(content)
-                yield content
-                
-                usage = result.get("usage", {})
-                self.tokens.update(usage.get("input_tokens", 0), usage.get("output_tokens", 0))
-            
-            response_text = "".join(assistant_content)
-            self.conversation.append([user_input, response_text])
-            self._save_state()
+            return response_text
             
         except Exception as e:
-            yield f"\n{Colors.RED}Error: {str(e)}{Colors.END}\n"
-    
-    def get_token_display(self) -> str:
-        if self.config.get("show_tokens", True):
-            return self.tokens.get_display()
-        return ""
+            return f"❌ Error: {str(e)}"
     
     def _save_state(self):
         self.state["conversation"] = self.conversation
@@ -464,70 +429,45 @@ class Ever1Agent:
         self.state["model_id"] = self.model_id
         save_state(self.state)
     
+    def get_token_display(self) -> str:
+        return self.tokens.display()
+    
     def clear_history(self):
         self.conversation = []
         self._save_state()
-        print(f"{Colors.GREEN}✓ History cleared{Colors.END}")
     
     def show_history(self):
         if not self.conversation:
-            print(f"{Colors.GRAY}No conversation history{Colors.END}")
-            return
+            return "No conversation"
         
-        print(f"\n{Colors.CYAN}=== History ==={Colors.END}")
-        for conv in self.conversation[-10:]:
+        output = "=== History ===\n"
+        for conv in self.conversation[-5:]:
             if isinstance(conv, list) and len(conv) >= 2:
-                print(f"\n--- User ---")
-                print(conv[0][:200])
-                print(f"\n--- Ever-1 ---")
-                print(conv[1][:200])
-    
-    def show_queue(self):
-        queue = load_queue()
-        if not queue:
-            print(f"{Colors.GRAY}Queue is empty{Colors.END}")
-            return
-        
-        print(f"\n{Colors.CYAN}=== Task Queue ==={Colors.END}")
-        for i, task in enumerate(queue):
-            status = "○" if i == 0 else "○"
-            print(f"{status} {task.get('description', f'Task {i+1}')}")
+                output += f"\nYou: {conv[0][:100]}\nEver-1: {conv[1][:100]}\n"
+        return output
     
     def switch_model(self, model_key: str):
         models = get_available_models(self.api_key)
         
         if model_key in models:
-            from config import save_config
-            info = models[model_key]
-            
             self.config["model"] = model_key
-            self.config["model_id"] = info.get("id", model_key)
+            self.config["model_id"] = models[model_key].get("id", model_key)
             save_config(self.config)
             
             self.model_key = model_key
-            self.model_id = info.get("id", model_key)
-            self.tokens.set_prices(info.get("price_input", 0), info.get("price_output", 0))
-            
-            print(f"{Colors.GREEN}✓ Model: {info.get('name', model_key)}{Colors.END}")
-        else:
-            print(f"{Colors.RED}Model not found: {model_key}{Colors.END}")
-            print("Use /models to see available")
+            self.model_id = models[model_key].get("id", model_key)
+            self.tokens.set_prices(models[model_key].get("price_input", 0), models[model_key].get("price_output", 0))
+            return f"✅ Model: {models[model_key].get('name', model_key)}"
+        return f"❌ Model not found: {model_key}"
     
     def save_state_on_quit(self):
         self._save_state()
         
-        # Save session summary
-        summary_file = os.path.expanduser("~/.ever1-agent/session.md")
-        tokens_info = self.get_token_display()
-        
-        with open(summary_file, "w") as f:
-            f.write(f"# Ever-1 Session Summary\n\n")
+        # Save session
+        with open(SESSION_FILE, "w") as f:
+            f.write(f"# Ever-1 Session\n\n")
             f.write(f"**Provider:** {self.provider}\n")
             f.write(f"**Model:** {self.model_id}\n")
-            f.write(f"**Tokens:** {tokens_info}\n")
-            f.write(f"\n**Last conversation:**\n")
+            f.write(f"**Tokens:** {self.get_token_display()}\n")
             if self.conversation:
-                f.write(f"User: {self.conversation[-1][0][:100]}...\n")
-                f.write(f"Ever-1: {self.conversation[-1][1][:100]}...\n")
-        
-        print(f"{Colors.CYAN}✓ State saved{Colors.END}")
+                f.write(f"\n**Last:** {self.conversation[-1][0][:50]}...\n")

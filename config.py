@@ -4,12 +4,15 @@ from pathlib import Path
 from datetime import datetime
 from urllib.request import Request, urlopen
 import subprocess
+import base64
+import io
 
 CONFIG_FILE = Path.home() / ".ever1-agent" / "config.json"
 MEMORY_FILE = Path.home() / ".ever1-agent" / "memory.json"
 STATE_FILE = Path.home() / ".ever1-agent" / "state.json"
 LEARNING_FILE = Path.home() / ".ever1-agent" / "learnings.json"
 QUEUE_FILE = Path.home() / ".ever1-agent" / "queue.json"
+SESSION_FILE = Path.home() / ".ever1-agent" / "session.md"
 
 PROVIDERS = {
     "openrouter": {
@@ -17,6 +20,7 @@ PROVIDERS = {
         "url": "https://openrouter.ai/api/v1",
         "models_url": "https://openrouter.ai/api/v1/models",
         "chat_endpoint": "/chat/completions",
+        "vision_models": ["google/gemini-pro-vision", "openai/gpt-4-vision", "anthropic/claude-3-opus"],
         "detect": ["or-", "sk-or-"],
     },
     "openai": {
@@ -24,6 +28,7 @@ PROVIDERS = {
         "url": "https://api.openai.com/v1",
         "models_url": "https://api.openai.com/v1/models",
         "chat_endpoint": "/chat/completions",
+        "vision_models": ["gpt-4-vision-preview", "gpt-4o"],
         "detect": ["sk-", "sk-proj-"],
     },
     "anthropic": {
@@ -31,14 +36,8 @@ PROVIDERS = {
         "url": "https://api.anthropic.com",
         "models_url": "https://api.anthropic.com/v1/models",
         "chat_endpoint": "/messages",
+        "vision_models": ["claude-3-opus", "claude-3-sonnet"],
         "detect": ["sk-ant-", "clz-"],
-    },
-    "azure": {
-        "name": "Azure OpenAI",
-        "url": None,
-        "models_url": None,
-        "chat_endpoint": "/chat/completions",
-        "detect": [], 
     },
 }
 
@@ -53,6 +52,9 @@ DEFAULT_CONFIG = {
     "stream": True,
     "show_tokens": True,
     "show_price": True,
+    "tts_engine": "pyttsx3",
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
     "system_prompt": """You are Ever-1, an elite autonomous AI agent. Direct, intelligent, self-improving.
 
 CORE PRINCIPLES:
@@ -64,8 +66,9 @@ CORE PRINCIPLES:
 CAPABILITIES:
 - Execute code (Python, Bash, Node.js)
 - Read/write files
-- Create todo lists for tasks
-- Self-correction when mistakes are made
+- Analyze images (describe what you see)
+- Text to speech (speak responses)
+- Telegram integration
 
 Your goal: Be the best AI agent possible.""",
 }
@@ -74,15 +77,12 @@ MODELS_CACHE = {}
 
 
 def detect_provider(api_key: str) -> str:
-    """Auto-detect provider from API key prefix"""
     if not api_key:
         return "openrouter"
-    
     for provider, info in PROVIDERS.items():
         for prefix in info.get("detect", []):
             if api_key.startswith(prefix):
                 return provider
-    
     return "openrouter"
 
 
@@ -91,7 +91,6 @@ def get_provider_info(provider: str) -> dict:
 
 
 def check_api_key() -> str:
-    """Check for API key in config or env"""
     config = load_config()
     key = config.get("api_key", "")
     if not key:
@@ -104,7 +103,6 @@ def check_api_key() -> str:
 
 
 def check_ollama() -> bool:
-    """Check if Ollama is running"""
     try:
         result = subprocess.run(["curl", "-s", "-m", "2", "http://localhost:11434/", "-o", "/dev/null"], 
                               capture_output=True)
@@ -137,7 +135,6 @@ def save_config(config: dict):
 
 
 def fetch_models(api_key: str = None, provider: str = None) -> dict:
-    """Fetch models from the API - dynamically, no hardcoding"""
     global MODELS_CACHE
     
     if not api_key:
@@ -172,15 +169,16 @@ def fetch_models(api_key: str = None, provider: str = None) -> dict:
             
             models = {}
             
-            if provider == "openrouter" or provider == "openai":
+            if provider in ["openrouter", "openai"]:
                 for m in data.get("data", [])[:50]:
                     model_id = m.get("id", "")
-                    model_name = m.get("id", "").split("/")[-1][:20]
+                    model_name = model_id.split("/")[-1][:20]
                     
                     pricing = m.get("pricing", {})
                     price_in = float(pricing.get("prompt", 0))
                     price_out = float(pricing.get("completion", 0))
                     is_free = price_in == 0 and price_out == 0
+                    supports_vision = any(vm in model_id.lower() for vm in ["vision", "vision", "opUS", "gpt-4o"])
                     
                     models[model_name] = {
                         "id": model_id,
@@ -189,18 +187,7 @@ def fetch_models(api_key: str = None, provider: str = None) -> dict:
                         "price_output": price_out,
                         "free": is_free,
                         "provider": provider,
-                    }
-            
-            elif provider == "anthropic":
-                for m in data.get("data", []):
-                    model_id = m.get("id", "")
-                    models[model_id] = {
-                        "id": model_id,
-                        "name": model_id,
-                        "price_input": 0.000003,  # Anthropic uses different pricing
-                        "price_output": 0.000015,
-                        "free": False,
-                        "provider": provider,
+                        "vision": supports_vision,
                     }
             
             if models:
@@ -208,27 +195,20 @@ def fetch_models(api_key: str = None, provider: str = None) -> dict:
                 return models
             
     except Exception as e:
-        print(f"Could not fetch models from {provider}: {e}")
+        print(f"Could not fetch models: {e}")
     
     return {}
 
 
 def get_available_models(api_key: str = None) -> dict:
-    """Get models - fetches from API"""
     if not api_key:
         api_key = check_api_key()
     
     provider = detect_provider(api_key)
-    models = fetch_models(api_key, provider)
-    
-    if not models:
-        return {}
-    
-    return models
+    return fetch_models(api_key, provider)
 
 
 def get_chat_url(provider: str) -> str:
-    """Get chat completion URL for provider"""
     provider_info = get_provider_info(provider)
     base_url = provider_info.get("url", "")
     endpoint = provider_info.get("chat_endpoint", "/chat/completions")

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
+"""Ever-1 AI Agent - Main Entry Point"""
 import sys
 import os
 import signal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from client import Ever1Agent, Colors
+from client import Ever1Agent, Colors, Emoji
 from config import (load_config, save_config, load_state, get_relevant_learnings,
-                   load_queue, add_to_queue, clear_queue, get_provider_info,
+                   load_queue, add_to_queue, get_provider_info,
                    check_api_key, check_ollama, get_available_models, PROVIDERS,
                    detect_provider, fetch_models)
 
@@ -21,23 +22,23 @@ def print_banner():
 ║  {Colors.WHITE} |  __/| |____| |    ___) | | |  __/\\__ \\ (__|   <               {Colors.GRAY}║
 ║  {Colors.WHITE} |_|   |______|_|   |____/|_|  \\___||___/\\___|_|\\_\\              {Colors.GRAY}║
 ║                                                                    ║
-║  {Colors.BLUE}Self-Learning AI Agent • Autonomous • Secure                    {Colors.GRAY}║
+║  {Colors.BLUE}Self-Learning AI Agent • Vision • Voice • Telegram   {Colors.GRAY}║
 ╚══════════════════════════════════════════════════════════════════════════╝{Colors.END}
 """
     print(banner)
 
 
-def check_and_setup() -> str:
-    """Check API key, detect provider, fetch models, return model choice"""
+def check_setup() -> str:
+    """Initial setup and model selection"""
     print(f"\n{Colors.CYAN}Checking configuration...{Colors.END}")
     
     api_key = check_api_key()
-    ollama_running = check_ollama()
+    ollama = check_ollama()
     
-    if not api_key and not ollama_running:
-        print(f"\n{Colors.RED}⚠ No API key detected and Ollama not running{Colors.END}")
-        print(f"\n{Colors.YELLOW}Please enter your API key:{Colors.END}")
-        print(f"{Colors.GRAY}(OpenRouter, OpenAI, or Anthropic - Get key from their website){Colors.END}")
+    if not api_key and not ollama:
+        print(f"\n{Colors.RED}⚠ No API key detected{Colors.END}")
+        print(f"\n{Colors.YELLOW}Enter API key:{Colors.END}")
+        print(f"{Colors.GRAY}(OpenRouter, OpenAI, or Anthropic){Colors.END}")
         
         new_key = input(f"\n{Colors.GREEN}API Key{Colors.GRAY}:{Colors.END} ").strip()
         
@@ -48,43 +49,44 @@ def check_and_setup() -> str:
             config["provider"] = provider
             save_config(config)
             api_key = new_key
-            print(f"{Colors.GREEN}✓ API key saved ({provider}){Colors.END}\n")
+            print(f"{Colors.GREEN}✓ Saved ({provider}){Colors.END}\n")
     
     if api_key:
         provider = detect_provider(api_key)
-        provider_info = get_provider_info(provider)
-        print(f"{Colors.GREEN}✓ {provider_info['name']} detected{Colors.END}")
+        print(f"{Colors.GREEN}✓ {get_provider_info(provider)['name']}{Colors.END}")
     
-    if ollama_running:
-        print(f"{Colors.GREEN}✓ Ollama is running{Colors.END}")
+    if ollama:
+        print(f"{Colors.GREEN}✓ Ollama running{Colors.END}")
     
-    print(f"\n{Colors.CYAN}Fetching models from API...{Colors.END}")
-    models = fetch_models(api_key, provider)
+    print(f"\n{Colors.CYAN}Fetching models...{Colors.END}")
+    models = fetch_models(api_key, detect_provider(api_key))
     
     if not models:
-        print(f"{Colors.YELLOW}Could not fetch models, using defaults{Colors.END}")
-        models = {}
+        print(f"{Colors.YELLOW}No models found{Colors.END}")
+        return ""
     
     print(f"\n{Colors.CYAN}Available Models ({len(models)}):{Colors.END}")
     
-    # Show first 15 models
-    for i, (key, info) in enumerate(list(models.items())[:15]):
-        price_in = "FREE" if info["price_input"] == 0 else f"${info['price_input']:.5f}/1k"
-        price_out = "FREE" if info["price_output"] == 0 else f"${info['price_output']:.5f}/1k"
-        free_tag = f" {Colors.GREEN}[FREE]{Colors.END}" if info.get("free") else ""
-        print(f"  {Colors.BLUE}{key:20}{Colors.END} ({price_in}/{price_out}){free_tag}")
+    free_models = [(k, v) for k, v in models.items() if v.get("free")]
+    paid_models = [(k, v) for k, v in models.items() if not v.get("free")]
+    
+    for key, info in free_models[:8]:
+        print(f"  {Colors.GREEN}{key:15}{Colors.END} {info['name'][:20]} [FREE]")
+    
+    for key, info in paid_models[:5]:
+        print(f"  {Colors.BLUE}{key:15}{Colors.END} {info['name'][:20]}")
     
     current = load_config().get("model", "")
-    print(f"\n{Colors.CYAN}Current model:{Colors.END} {Colors.WHITE}{current or 'auto'}{Colors.END}")
+    print(f"\n{Colors.CYAN}Current:{Colors.END} {current or 'auto'}")
     
-    choice = input(f"\n{Colors.GREEN}Select model{Colors.GRAY}(enter for auto){Colors.END}: ").strip()
+    choice = input(f"\n{Colors.GREEN}Select{Colors.GRAY}(enter){Colors.END}: ").strip()
     
     if choice and choice in models:
         config = load_config()
         config["model"] = choice
         config["model_id"] = models[choice].get("id", choice)
         save_config(config)
-        print(f"{Colors.GREEN}✓ Model set to {choice}{Colors.END}")
+        print(f"{Colors.GREEN}✓ {choice}{Colors.END}")
         return choice
     
     return current
@@ -94,58 +96,44 @@ def main():
     signal.signal(signal.SIGINT, lambda s, f: cleanup())
     signal.signal(signal.SIGTSTP, lambda s, f: cleanup())
     
-    model = check_and_setup()
+    model = check_setup()
     agent = Ever1Agent()
     
     print_banner()
     
     print(f"  {Colors.GRAY}Provider:{Colors.END} {agent.provider}")
-    print(f"  {Colors.GRAY}Model:{Colors.WHITE} {agent.model_id}{Colors.END}")
-    print(f"  {Colors.GRAY}Queue:{Colors.END} {len(load_queue())} tasks")
+    print(f"  {Colors.GRAY}Model:{Colors.END} {agent.model_id}")
     
-    token_info = agent.get_token_display()
-    if token_info:
-        print(f"  {Colors.GRAY}Session:{Colors.END} {token_info}")
-    
-    # Load previous conversation if exists
     if agent.conversation:
-        print(f"\n{Colors.YELLOW}Resuming previous conversation ({len(agent.conversation)} messages){Colors.END}")
+        print(f"\n{Colors.YELLOW}↻ Resuming ({len(agent.conversation)} messages){Colors.END}")
     
     print()
     
-    state = load_state()
-    if state.get("pending_tasks"):
-        print(f"{Colors.YELLOW}⚠ Pending tasks from last session{Colors.END}")
-        for task in state["pending_tasks"][:3]:
-            print(f"  • {task.get('description', 'Task')}")
-        print()
-    
+    # Main loop
     while True:
         try:
-            prompt = f"{Colors.GRAY}┌─:{Colors.END}{Colors.GREEN}You{Colors.GRAY}:─>{Colors.END} "
-            user_input = input(prompt).strip()
+            user_input = input(f"{Colors.GRAY}┌─:{Colors.END}{Colors.GREEN}You{Colors.GRAY}:─>{Colors.END} ").strip()
             
             if not user_input:
                 continue
             
-            if user_input.startswith("/") or user_input.startswith("!"):
+            if user_input.startswith("/"):
                 handle_command(user_input, agent)
                 continue
             
             print()
             
-            for chunk in agent.chat(user_input, stream=True):
-                print(chunk, end="", flush=True)
+            # Think briefly
+            print(f"{Emoji.THINKING} Thinking...")
+            response = agent.chat(user_input)
             
-            print()
+            # Show response
+            print(response)
             
-            token_info = agent.get_token_display()
-            if token_info:
-                print(f"  {Colors.GRAY}[{token_info}]{Colors.END}")
-            
-            queue = load_queue()
-            if queue:
-                print(f"  {Colors.CYAN}⚡ {len(queue)} tasks in queue{Colors.END}")
+            # Show tokens
+            tokens = agent.get_token_display()
+            if tokens:
+                print(f"  {Colors.GRAY}[{tokens}]{Colors.END}")
             
             print()
             
@@ -159,69 +147,68 @@ def main():
 def handle_command(cmd: str, agent: Ever1Agent):
     cmd_clean = cmd.lower().strip()
     
-    if cmd_clean in ["/help", "!??"]:
+    if cmd_clean == "/help":
         print(f"""
-{Colors.CYAN}Commands:{Colors.END}
-  {Colors.BLUE}/help{Colors.END}     - Show this help
-  {Colors.BLUE}/clear{Colors.END}   - Clear history
-  {Colors.BLUE}/history{Colors.END}- View history
-  {Colors.BLUE}/tasks{Colors.END}  - Show queue tasks
-  {Colors.BLUE}/queue{Colors.END} <task> - Add task to queue
-  {Colors.BLUE}/models{Colors.END}- List available models
-  {Colors.BLUE}/model{Colors.END} <name> - Switch model
-  {Colors.BLUE}/learn{Colors.END}  - Show learnings
-  {Colors.BLUE}/quit{Colors.END}   - Exit (saves state)
-
-{Colors.CYAN}Tool Commands:{Colors.END}
-  {Colors.BLUE}/exec <code>{Colors.END}  - Run Python code
-  {Colors.BLUE}/read <path>{Colors.END} - Read file
-  {Colors.BLUE}/write <path>=<content>{Colors.END} - Write file
-  {Colors.BLUE}/ls <dir>{Colors.END}   - List files
+{Emoji.CODE} /exec <code>  - Run code
+{Emoji.FILE} /read <path> - Read file
+{Emoji.FILE} /write <path>=<content> - Write file
+{Emoji.FILE} /ls <dir>   - List files
+{Emoji.VISION} /vision <path> - Analyze image
+{Emoji.SPEAK} /speak <text> - Text to speech
+{Emoji.CODE} /clear     - Clear history
+{Emoji.CODE} /history  - View history
+{Emoji.CODE} /models   - List models
+{Emoji.CODE} /model <name> - Switch model
+{Emoji.CODE} /learn    - Show learnings
+{Emoji.CODE} /telegram - Setup Telegram
+{Emoji.CODE} /quit     - Exit
 """)
     
     elif cmd_clean == "/clear":
         agent.clear_history()
+        print(f"{Colors.GREEN}✓ Cleared{Colors.END}")
     
     elif cmd_clean == "/history":
-        agent.show_history()
-    
-    elif cmd_clean in ["/tasks", "/queue"]:
-        agent.show_queue()
-    
-    elif cmd_clean.startswith("/queue "):
-        task_desc = cmd[7:].strip()
-        if task_desc:
-            add_to_queue({"description": task_desc, "added": "now"})
-            print(f"{Colors.GREEN}✓ Added to queue: {task_desc}{Colors.END}")
+        print(agent.show_history())
     
     elif cmd_clean == "/models":
         api_key = check_api_key()
-        provider = detect_provider(api_key)
-        models = fetch_models(api_key, provider)
+        models = fetch_models(api_key, detect_provider(api_key))
         
         if not models:
-            print(f"{Colors.YELLOW}Could not fetch models{Colors.END}")
+            print(f"{Colors.RED}No models{Colors.END}")
             return
         
-        print(f"\n{Colors.CYAN}Available Models ({len(models)}):{Colors.END}")
-        for key, info in list(models.items())[:25]:
-            price_in = "FREE" if info["price_input"] == 0 else f"${info['price_input']:.5f}/1k"
-            price_out = "FREE" if info["price_output"] == 0 else f"${info['price_output']:.5f}/1k"
-            current = " (current)" if key == agent.model_key else ""
+        print(f"\n{Colors.CYAN}Models ({len(models)}):{Colors.END}")
+        for key, info in list(models.items())[:20]:
+            current = " ←" if key == agent.model_key else ""
             free = f" {Colors.GREEN}[FREE]{Colors.END}" if info.get("free") else ""
-            print(f"  {Colors.BLUE}{key}{Colors.END}: ({price_in}/{price_out}){free}{current}")
+            vision = f" {Colors.CYAN}[Vision]{Colors.END}" if info.get("vision") else ""
+            print(f"  {Colors.BLUE}{key}{Colors.END}{free}{vision}{current}")
     
     elif cmd_clean.startswith("/model "):
-        model_key = cmd[7:].strip()
-        agent.switch_model(model_key)
-    
-    elif cmd_clean == "/model":
-        print(f"\n{Colors.CYAN}Current: {agent.model_id}{Colors.END}")
-        print("Use /model <name> to switch")
+        key = cmd[7:].strip()
+        print(agent.switch_model(key))
     
     elif cmd_clean == "/learn":
         learnings = get_relevant_learnings()
-        print(f"\n{learnings}" if learnings else f"{Colors.GRAY}No learnings yet{Colors.END}")
+        print(f"\n{learnings}" if learnings else "No learnings")
+    
+    elif "/telegram" in cmd_clean:
+        print(f"\n{Colors.CYAN}Telegram Setup:{Colors.END}")
+        print("1. Create bot: @BotFather on Telegram")
+        print("2. Get bot token")
+        print("3. Start chat with bot to get chat_id")
+        
+        bot_token = input(f"{Colors.GREEN}Bot Token{Colors.GRAY}:{Colors.END} ").strip()
+        chat_id = input(f"{Colors.GREEN}Chat ID{Colors.GRAY}:{Colors.END} ").strip()
+        
+        if bot_token and chat_id:
+            config = load_config()
+            config["telegram_bot_token"] = bot_token
+            config["telegram_chat_id"] = chat_id
+            save_config(config)
+            print(f"{Colors.GREEN}✓ Telegram configured{Colors.END}")
     
     elif cmd_clean in ["/quit", "/exit"]:
         cleanup(agent)
@@ -229,7 +216,6 @@ def handle_command(cmd: str, agent: Ever1Agent):
     
     else:
         print(f"{Colors.YELLOW}Unknown: {cmd}{Colors.END}")
-        print(f"Type {Colors.BLUE}/help{Colors.END}")
 
 
 def cleanup(agent=None):
