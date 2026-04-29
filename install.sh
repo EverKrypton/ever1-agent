@@ -15,18 +15,15 @@ echo "           EVER-1 AI AGENT                    "
 echo "=============================================="
 echo "Installing..."
 
-# Download files
-for f in main.py client.py config.py tools.py; do
+# Download all files
+FILES="main.py client.py config.py tools.py telegram_bot.py __init__.py"
+for f in $FILES; do
     curl -fsSL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/$f" -o "$DIR/$f"
 done
 
-# Fix DIM
-if ! grep -q "DIM = " "$DIR/client.py"; then
-    sed -i "/BOLD = '.*/a\\    DIM = '\\\\033[2m'" "$DIR/client.py"
-fi
-
-# Config with API key
-python3 << PYEOF
+# Config with API key if not exists
+if [ ! -f "$DIR/config.json" ]; then
+    python3 << PYEOF
 import json, os
 cfg = {
     "api_key": "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",
@@ -36,13 +33,23 @@ cfg = {
 with open("$DIR/config.json", "w") as f:
     json.dump(cfg, f)
 PYEOF
+fi
 
-# Create everai command in both possible locations
+# Create everai command
 echo '#!/bin/bash
 cd ~/.ever1-agent
 python3 main.py' > "$BIN/everai"
 chmod +x "$BIN/everai"
 
+# Add to PATH in .bashrc if not already
+BASHRC="$HOME/.bashrc"
+if [ -f "$BASHRC" ]; then
+    if ! grep -q ".local/bin" "$BASHRC"; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASHRC"
+    fi
+fi
+
+# Termux
 TERMUX_PREFIX="/data/data/com.termux/files/home"
 TERMUX_BIN="$TERMUX_PREFIX/bin"
 
@@ -52,6 +59,14 @@ if [ -d "$TERMUX_PREFIX" ]; then
 cd ~/.ever1-agent
 python3 main.py' > "$TERMUX_BIN/everai"
     chmod +x "$TERMUX_BIN/everai"
+    
+    # Add to PATH in termux .bashrc
+    TERMUX_BASHRC="$TERMUX_PREFIX/.bashrc"
+    if [ -f "$TERMUX_BASHRC" ]; then
+        if ! grep -q ".local/bin" "$TERMUX_BASHRC"; then
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$TERMUX_BASHRC"
+        fi
+    fi
 fi
 
 echo ""
