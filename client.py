@@ -9,15 +9,15 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 try:
-    from config import (load_config, save_config, get_model_info, load_state, save_state,
-                       load_memory, save_memory, add_learning, get_relevant_learnings,
-                       load_queue, get_next_task, add_to_queue, clear_queue, 
-                       get_available_models, DEFAULT_MODELS)
+    from config import (load_config, save_config, detect_provider, get_provider_info,
+                       load_state, save_state, load_memory, save_memory, add_learning, 
+                       get_relevant_learnings, load_queue, get_next_task, add_to_queue, 
+                       get_available_models, get_chat_url, PROVIDERS)
 except ImportError:
-    from .config import (load_config, save_config, get_model_info, load_state, save_state,
-                        load_memory, save_memory, add_learning, get_relevant_learnings,
-                        load_queue, get_next_task, add_to_queue, clear_queue,
-                        get_available_models, DEFAULT_MODELS)
+    from .config import (load_config, save_config, detect_provider, get_provider_info,
+                       load_state, save_state, load_memory, save_memory, add_learning,
+                       get_relevant_learnings, load_queue, get_next_task, add_to_queue,
+                       get_available_models, get_chat_url, PROVIDERS)
 
 
 class Colors:
@@ -30,36 +30,13 @@ class Colors:
     CYAN = '\033[36m'
     WHITE = '\033[37m'
     GRAY = '\033[90m'
-    GRAY_DARK = '\033[38;5;240m'
-    BG_BLACK = '\033[40m'
     BOLD = '\033[1m'
-    DIM = '\033[2m'
     END = '\033[0m'
-    
-    @staticmethod
-    def input_color(text: str) -> str:
-        return f"{Colors.GREEN}{text}{Colors.END}"
-    
-    @staticmethod
-    def output_color(text: str) -> str:
-        return f"{Colors.WHITE}{text}{Colors.END}"
-    
-    @staticmethod
-    def status_color(text: str) -> str:
-        return f"{Colors.CYAN}{text}{Colors.END}"
-    
-    @staticmethod
-    def error_color(text: str) -> str:
-        return f"{Colors.RED}{text}{Colors.END}"
-
-    @staticmethod
-    def success_color(text: str) -> str:
-        return f"{Colors.GREEN}{text}{Colors.END}"
 
 
 class ActionIndicator:
     def __init__(self):
-        self.actions = ["Thinking", "Analyzing", "Processing", "Executing", "Learning"]
+        self.actions = ["Thinking", "Processing", "Executing", "Learning"]
         self.current_action = "Starting"
         self.frames = ["●○○○○", "○○●○○", "○○○●○", "○○○○●"]
         self.current = 0
@@ -90,16 +67,13 @@ class ActionIndicator:
             time.sleep(0.15)
         sys.stdout.write("\r" + " " * 30 + "\r")
         sys.stdout.flush()
-    
-    def update(self, action: str):
-        self.current_action = action
 
 
 class ProgressBar:
     def __init__(self, width: int = 25):
         self.width = width
     
-    def show(self, current: int, total: int, prefix: str = "", color: str = Colors.CYAN):
+    def show(self, current: int, total: int, prefix: str = ""):
         if total == 0:
             percent = 100
             filled = self.width
@@ -108,8 +82,8 @@ class ProgressBar:
             filled = int(self.width * current / total) if total > 0 else 0
         
         bar = "●" * filled + "○" * (self.width - filled)
-        prefix_text = f"{color}{prefix}{Colors.END}" if prefix else ""
-        sys.stdout.write(f"\r{prefix_text}[{Colors.CYAN}{bar}{Colors.END}] {color}{percent}%{Colors.END}")
+        prefix_text = f"{Colors.CYAN}{prefix}{Colors.END}" if prefix else ""
+        sys.stdout.write(f"\r{prefix_text}[{Colors.CYAN}{bar}{Colors.END}] {Colors.CYAN}{percent}%{Colors.END}")
         sys.stdout.flush()
 
 
@@ -118,28 +92,27 @@ class TokenTracker:
         self.session_prompt_tokens = 0
         self.session_completion_tokens = 0
         self.total_cost = 0.0
-        self.model_price_input = 0.0
-        self.model_price_output = 0.0
+        self.price_input = 0.0
+        self.price_output = 0.0
     
-    def set_model_prices(self, model_key: str):
-        info = get_model_info(model_key)
-        self.model_price_input = info.get("price_input", 0)
-        self.model_price_output = info.get("price_output", 0)
+    def set_prices(self, price_in: float, price_out: float):
+        self.price_input = price_in
+        self.price_output = price_out
     
     def update(self, prompt_tokens: int = 0, completion_tokens: int = 0):
         self.session_prompt_tokens += prompt_tokens
         self.session_completion_tokens += completion_tokens
         
-        cost = (prompt_tokens * self.model_price_input / 1000) + \
-               (completion_tokens * self.model_price_output / 1000)
+        cost = (prompt_tokens * self.price_input / 1000) + \
+               (completion_tokens * self.price_output / 1000)
         self.total_cost += cost
     
     def get_display(self) -> str:
         total = self.session_prompt_tokens + self.session_completion_tokens
         cost_str = f"${self.total_cost:.4f}" if self.total_cost > 0 else "$0.00"
         
-        if self.model_price_input > 0:
-            return f"tokens: {total} ({self.session_prompt_tokens}+{self.session_completion_tokens}) | cost: {cost_str}"
+        if self.price_input > 0:
+            return f"tokens: {total} | cost: {cost_str}"
         return f"tokens: {total}"
 
 
@@ -148,85 +121,65 @@ class Ever1Agent:
         self.config = load_config()
         self.state = load_state()
         
-        self.provider = self.config.get("provider", "openrouter")
-        self.api_url = self.config["api_url"]
-        self.model_key = self.config.get("model", "minimax")
-        self.model_info = get_model_info(self.model_key)
-        self.model_id = self.model_info["id"]
+        self.api_key = self.config.get("api_key", "")
+        if not self.api_key:
+            from config import check_api_key
+            self.api_key = check_api_key()
+        
+        self.provider = detect_provider(self.api_key)
+        self.provider_info = get_provider_info(self.provider)
+        
+        self.model_key = self.config.get("model", "")
+        self.model_id = self.config.get("model_id", "")
         
         self.temperature = self.config["temperature"]
         self.system_prompt = self.config["system_prompt"]
         
-        self.conversation = []
-        self.memory = load_memory()
-        self.queue = load_queue()
+        self.conversation = self.state.get("conversation", [])
         
         self.action = ActionIndicator()
         self.progress = ProgressBar()
         self.tokens = TokenTracker()
-        self.tokens.set_model_prices(self.model_key)
         
         self.interrupted = False
-        self.is_thinking = False
         
-        self._load_history()
-        self._check_pending_tasks()
+        self._ensure_model_loaded()
     
-    def _load_history(self):
-        history_file = os.path.expanduser("~/.ever1-agent/history.json")
-        if os.path.exists(history_file):
-            try:
-                with open(history_file) as f:
-                    self.conversation = json.load(f)
-            except Exception:
-                self.conversation = []
-    
-    def _save_history(self):
-        history_file = os.path.expanduser("~/.ever1-agent/history.json")
-        os.makedirs(os.path.dirname(history_file), exist_ok=True)
-        max_history = self.config.get("max_history", 20)
-        
-        with open(history_file, "w") as f:
-            json.dump(self.conversation[-max_history:], f)
-    
-    def _check_pending_tasks(self):
-        state = load_state()
-        if state.get("pending_tasks"):
-            print(f"\n{Colors.YELLOW}⚠ Pending tasks from last session:{Colors.END}")
-            for task in state["pending_tasks"][:3]:
-                print(f"  • {task.get('description', 'Task')}")
-            print()
-    
-    def interrupt(self):
-        self.interrupted = True
-        self.action.stop()
-        print(f"\n{Colors.YELLOW}⚠ Interrupted{Colors.END}")
-    
-    def add_task_to_queue(self, task: dict):
-        add_to_queue(task)
-        if not self.queue:
-            self.queue = [task]
-        else:
-            self.queue.append(task)
-    
-    def check_queue(self):
-        if self.queue:
-            task = get_next_task()
-            if task:
-                self.action.set_action(f"Queue: {task.get('description', 'Task')[:20]}")
-                return task
-        return None
+    def _ensure_model_loaded(self):
+        """Ensure model is loaded - get from API if not set"""
+        if not self.model_id:
+            models = get_available_models(self.api_key)
+            
+            for key, info in models.items():
+                if self.model_key == key or self.model_key in info.get("id", ""):
+                    self.model_id = info.get("id", "")
+                    self.config["model"] = key
+                    self.config["model_id"] = self.model_id
+                    save_config(self.config)
+                    self.tokens.set_prices(info.get("price_input", 0), info.get("price_output", 0))
+                    return
+            
+            # Try first available model
+            if models:
+                first_key = list(models.keys())[0]
+                first_info = models[first_key]
+                self.model_key = first_key
+                self.model_id = first_info.get("id", first_key)
+                self.config["model"] = first_key
+                self.config["model_id"] = self.model_id
+                save_config(self.config)
+                self.tokens.set_prices(first_info.get("price_input", 0), first_info.get("price_output", 0))
     
     def _build_messages(self, user_input: str) -> list:
         messages = []
         
-        relevant = get_relevant_learnings(user_input)
+        relevant = get_relevant_learnings()
         if relevant:
             messages.append({"role": "system", "content": self.system_prompt + "\n\n" + relevant})
         else:
             messages.append({"role": "system", "content": self.system_prompt})
         
-        for conv in self.conversation:
+        for conv in self.conversation[-10:]:
             if isinstance(conv, list) and len(conv) >= 2:
                 messages.append({"role": "user", "content": conv[0]})
                 messages.append({"role": "assistant", "content": conv[1]})
@@ -235,7 +188,6 @@ class Ever1Agent:
         return messages
     
     def _detect_command(self, user_input: str) -> dict:
-        """Detect tool or command usage"""
         cmd_lower = user_input.lower().strip()
         result = {"used": False, "action": "conversation"}
         
@@ -255,16 +207,9 @@ class Ever1Agent:
             path = user_input[4:].strip() or "."
             result = {"used": True, "action": "listing", "tool": "list_files", "path": path}
         
-        elif cmd_lower.startswith("/todo ") or "create todo" in cmd_lower:
-            result = {"used": True, "action": "planning", "tool": "create_todo", "content": user_input[6:].strip()}
-        
-        elif "/queue" in cmd_lower or "add to queue" in cmd_lower:
-            result = {"used": True, "action": "queueing", "tool": "add_queue", "content": user_input.replace("/queue", "").replace("add to queue", "").strip()}
-        
         return result
     
     def _execute_tool(self, tool: str, params: dict) -> dict:
-        """Execute tool and return result"""
         result = {"success": False, "output": "", "error": ""}
         
         if tool == "execute":
@@ -313,7 +258,7 @@ class Ever1Agent:
                 from pathlib import Path
                 path = os.path.expanduser(params.get("path", "."))
                 p = Path(path)
-                files = [str(f) for f in p.glob("*")][:20]
+                files = [str(f.name) for f in p.glob("*")][:20]
                 result["output"] = "\n".join(files)
                 result["success"] = True
             except Exception as e:
@@ -322,7 +267,6 @@ class Ever1Agent:
         return result
     
     def _self_evaluate(self, response: str) -> dict:
-        """Evaluate response quality"""
         score = 7
         notes = "Good response"
         
@@ -350,35 +294,32 @@ class Ever1Agent:
                 if result.get("success"):
                     self.action.stop()
                     yield f"{Colors.GREEN}✓ Done{Colors.END}\n{result.get('output', '')}\n"
-                    add_learning(cmd_result.get("action"), user_input[:100], True, 9, result.get("output", "")[:50])
+                    add_learning(cmd_result.get("action"), user_input[:100], True, 9)
                 else:
                     self.action.stop()
                     yield f"{Colors.RED}✗ Error{Colors.END}\n{result.get('error', '')}\n"
-                    add_learning(cmd_result.get("action"), user_input[:100], False, 4, result.get("error", ""))
+                    add_learning(cmd_result.get("action"), user_input[:100], False, 4)
                 
                 self.conversation.append([user_input, result.get("output", result.get("error", ""))])
-                self._save_history()
+                self._save_state()
                 return
             
             self.action.stop()
         
         self.action.start("Thinking")
         
-        if self.provider == "openrouter":
-            yield from self._openrouter_chat(user_input, stream=stream)
+        # Route based on provider
+        if self.provider in ["openrouter", "openai"]:
+            yield from self._api_chat(user_input, stream=stream)
+        elif self.provider == "anthropic":
+            yield from self._anthropic_chat(user_input, stream=stream)
         else:
-            yield from self._ollama_chat(user_input, stream=stream)
+            yield from self._api_chat(user_input, stream=stream)
     
-    def _openrouter_chat(self, user_input: str, stream: bool = True) -> Generator[str, None, None]:
-        api_key = self.config.get("api_key", "") or os.getenv("OPENROUTER_API_KEY", "")
-        
-        if not api_key:
-            yield f"\n{Colors.RED}Error: No API key.{Colors.END}\n"
-            yield "Set OPENROUTER_API_KEY env variable or configure in config.json\n"
-            return
-        
-        self.action.set_action("Connecting")
+    def _api_chat(self, user_input: str, stream: bool = True) -> Generator[str, None, None]:
         messages = self._build_messages(user_input)
+        
+        chat_url = get_chat_url(self.provider)
         
         payload = {
             "model": self.model_id,
@@ -388,7 +329,7 @@ class Ever1Agent:
         }
         
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://ever1.local",
             "X-Title": "Ever-1 Agent"
@@ -397,7 +338,7 @@ class Ever1Agent:
         try:
             self.action.set_action("Sending")
             req = Request(
-                self.api_url,
+                chat_url,
                 data=json.dumps(payload).encode("utf-8"),
                 headers=headers,
                 method="POST"
@@ -428,14 +369,12 @@ class Ever1Agent:
                                     yield content_piece
                                     chunk_count += 1
                                     if chunk_count % 10 == 0:
-                                        self.progress.show(chunk_count, 50, "Loading: ", Colors.CYAN)
+                                        self.progress.show(chunk_count, 50, "Loading")
                             except json.JSONDecodeError:
                                 continue
                                 
                                 usage = data.get("usage", {})
-                                prompt_tok = usage.get("prompt_tokens", 0)
-                                completion_tok = usage.get("completion_tokens", 0)
-                                self.tokens.update(prompt_tok, completion_tok)
+                                self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
             else:
                 with urlopen(req, timeout=120) as response:
                     result = json.loads(response.read().decode("utf-8"))
@@ -446,7 +385,7 @@ class Ever1Agent:
                     self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
                     yield content
             
-            self.progress.show(50, 50, "Complete: ", Colors.GREEN)
+            self.progress.show(50, 50, "Done")
             print()
             
             response_text = "".join(assistant_content)
@@ -454,7 +393,7 @@ class Ever1Agent:
             add_learning("conversation", user_input[:100], evaluation["score"] > 6, evaluation["score"], evaluation["notes"])
             
             self.conversation.append([user_input, response_text])
-            self._save_history()
+            self._save_state()
             
         except HTTPError as e:
             try:
@@ -466,56 +405,54 @@ class Ever1Agent:
         except Exception as e:
             yield f"\n{Colors.RED}Error: {str(e)}{Colors.END}\n"
     
-    def _ollama_chat(self, user_input: str, stream: bool = True) -> Generator[str, None, None]:
+    def _anthropic_chat(self, user_input: str, stream: bool = True) -> Generator[str, None, None]:
         messages = self._build_messages(user_input)
         
-        api_url = f"{self.api_url}/api/chat"
+        chat_url = get_chat_url("anthropic")
+        
+        system_msg = messages[0]["content"] if messages[0]["role"] == "system" else ""
+        
+        anthropic_messages = []
+        for m in messages[1:]:
+            if m["role"] in ["user", "assistant"]:
+                anthropic_messages.append(m)
         
         payload = {
             "model": self.model_id,
-            "messages": messages,
-            "stream": stream,
-            "options": {"temperature": self.temperature}
+            "messages": anthropic_messages,
+            "max_tokens": 4096,
+            "system": system_msg,
+        }
+        
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json"
         }
         
         try:
+            self.action.set_action("Sending")
             req = Request(
-                api_url,
+                chat_url,
                 data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 method="POST"
             )
             
             assistant_content = []
             
-            if stream:
-                with urlopen(req, timeout=180) as response:
-                    for line in response:
-                        if self.interrupted:
-                            return
-                        
-                        line = line.decode("utf-8").strip()
-                        if line:
-                            try:
-                                data = json.loads(line)
-                                if "message" in data:
-                                    content_piece = data.get("message", {}).get("content", "")
-                                    if content_piece:
-                                        assistant_content.append(content_piece)
-                                        yield content_piece
-                                if data.get("done"):
-                                    break
-                            except:
-                                continue
-            else:
-                with urlopen(req, timeout=180) as response:
-                    result = json.loads(response.read().decode("utf-8"))
-                    content = result.get("message", {}).get("content", "")
-                    assistant_content.append(content)
-                    yield content
+            with urlopen(req, timeout=120) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                content = result.get("content", [{}])[0].get("text", "")
+                assistant_content.append(content)
+                yield content
+                
+                usage = result.get("usage", {})
+                self.tokens.update(usage.get("input_tokens", 0), usage.get("output_tokens", 0))
             
-            self.conversation.append([user_input, "".join(assistant_content)])
-            self._save_history()
+            response_text = "".join(assistant_content)
+            self.conversation.append([user_input, response_text])
+            self._save_state()
             
         except Exception as e:
             yield f"\n{Colors.RED}Error: {str(e)}{Colors.END}\n"
@@ -525,9 +462,15 @@ class Ever1Agent:
             return self.tokens.get_display()
         return ""
     
+    def _save_state(self):
+        self.state["conversation"] = self.conversation
+        self.state["model"] = self.model_key
+        self.state["model_id"] = self.model_id
+        save_state(self.state)
+    
     def clear_history(self):
         self.conversation = []
-        self._save_history()
+        self._save_state()
         print(f"{Colors.GREEN}✓ History cleared{Colors.END}")
     
     def show_history(self):
@@ -536,7 +479,7 @@ class Ever1Agent:
             return
         
         print(f"\n{Colors.CYAN}=== History ==={Colors.END}")
-        for i, conv in enumerate(self.conversation[-10:]):
+        for conv in self.conversation[-10:]:
             if isinstance(conv, list) and len(conv) >= 2:
                 print(f"\n--- User ---")
                 print(conv[0][:200])
@@ -555,49 +498,37 @@ class Ever1Agent:
             print(f"{status} {task.get('description', f'Task {i+1}')}")
     
     def switch_model(self, model_key: str):
-        from config import get_available_models, DEFAULT_MODELS
-        models = get_available_models()
+        models = get_available_models(self.api_key)
         
         if model_key in models:
             from config import save_config
-            config = load_config()
-            config["model"] = model_key
-            save_config(config)
+            info = models[model_key]
+            
+            self.config["model"] = model_key
+            self.config["model_id"] = info.get("id", model_key)
+            save_config(self.config)
             
             self.model_key = model_key
-            self.model_info = get_model_info(model_key)
-            self.model_id = self.model_info["id"]
-            self.tokens.set_model_prices(model_key)
+            self.model_id = info.get("id", model_key)
+            self.tokens.set_prices(info.get("price_input", 0), info.get("price_output", 0))
             
-            print(f"{Colors.GREEN}✓ Model: {self.model_info['name']}{Colors.END}")
+            print(f"{Colors.GREEN}✓ Model: {info.get('name', model_key)}{Colors.END}")
         else:
-            print(f"{Colors.RED}Unknown model: {model_key}{Colors.END}")
+            print(f"{Colors.RED}Model not found: {model_key}{Colors.END}")
+            print("Use /models to see available")
     
     def save_state_on_quit(self):
-        state = load_state()
-        state["session_end"] = datetime.now().isoformat()
+        self._save_state()
         
-        queue = load_queue()
-        if queue:
-            state["pending_tasks"] = queue
-        
-        state_file = os.path.expanduser("~/.ever1-agent/state.json")
-        os.makedirs(os.path.dirname(state_file), exist_ok=True)
-        with open(state_file, "w") as f:
-            json.dump(state, f, indent=2)
-        
+        # Save session summary
         summary_file = os.path.expanduser("~/.ever1-agent/session.md")
         tokens_info = self.get_token_display()
         
         with open(summary_file, "w") as f:
             f.write(f"# Ever-1 Session Summary\n\n")
-            f.write(f"**Ended:** {datetime.now().isoformat()}\n\n")
-            f.write(f"**Tokens:** {tokens_info}\n\n")
-            f.write(f"**Model:** {self.model_info['name']}\n\n")
-            if queue:
-                f.write(f"## Pending Tasks\n")
-                for task in queue:
-                    f.write(f"- {task.get('description', 'Task')}\n")
+            f.write(f"**Provider:** {self.provider}\n")
+            f.write(f"**Model:** {self.model_id}\n")
+            f.write(f"**Tokens:** {tokens_info}\n")
             f.write(f"\n**Last conversation:**\n")
             if self.conversation:
                 f.write(f"User: {self.conversation[-1][0][:100]}...\n")
