@@ -124,17 +124,34 @@ def check_setup() -> str:
         print(f"{Colors.RED}No models found{Colors.END}")
         return ""
     
-    # Auto-select first FREE model (nemotron usually free)
+    # Auto-select CLAUDE as default (best model)
     config = load_config()
-    saved_model = config.get("model", "")
     
-    # Try to use a free model automatically
+    # Try claude first
     for key, info in models.items():
-        if info.get("free"):
+        if "claude" in key.lower() and "opus" in key.lower():
             config["model"] = key
             config["model_id"] = info.get("id", key)
             save_config(config)
-            print(f"{Colors.GREEN}✓ Model: {key} (free){Colors.END}")
+            print(f"{Colors.GREEN}✓ Model: {key}{Colors.END}")
+            return key
+    
+    # Try GPT-4o as second choice
+    for key, info in models.items():
+        if "gpt-4o" in key.lower():
+            config["model"] = key
+            config["model_id"] = info.get("id", key)
+            save_config(config)
+            print(f"{Colors.GREEN}✓ Model: {key}{Colors.END}")
+            return key
+    
+    # Try any clausal as third
+    for key, info in models.items():
+        if "claude" in key.lower():
+            config["model"] = key
+            config["model_id"] = info.get("id", key)
+            save_config(config)
+            print(f"{Colors.GREEN}✓ Model: {key}{Colors.END}")
             return key
     
     # Fallback to first model

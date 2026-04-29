@@ -10,12 +10,12 @@ try:
     from config import (load_config, save_config, detect_provider, get_provider_info,
                        load_state, save_state, add_learning, get_relevant_learnings,
                        load_queue, get_next_task, add_to_queue, 
-                       get_available_models, get_chat_url, PROVIDERS)
+                       get_available_models, get_chat_url, PROVIDERS, SESSION_FILE)
 except ImportError:
     from .config import (load_config, save_config, detect_provider, get_provider_info,
-                        load_state, save_state, add_learning, get_relevant_learnings,
-                        load_queue, get_next_task, add_to_queue,
-                        get_available_models, get_chat_url, PROVIDERS)
+                         load_state, save_state, add_learning, get_relevant_learnings,
+                         load_queue, get_next_task, add_to_queue,
+                         get_available_models, get_chat_url, PROVIDERS, SESSION_FILE)
 
 try:
     from tools import ToolExecutor
