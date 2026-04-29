@@ -104,11 +104,24 @@ def check_setup() -> str:
     api_key = check_api_key()
     ollama = check_ollama()
     
+    # Check for existing config with API key
+    if not api_key:
+        config = load_config()
+        api_key = config.get("api_key", "")
+    
     if not api_key and not ollama:
         print(f"\n{Colors.YELLOW}Enter API key:{Colors.END}")
         print(f"{Colors.DIM}(OpenRouter/OpenAI/Anthropic){Colors.END}")
         
-        new_key = input(f"\n{Colors.GREEN}Key{Colors.END} > ").strip()
+        # Read from command line args if available
+        import sys
+        if len(sys.argv) > 1:
+            new_key = sys.argv[1]
+        else:
+            try:
+                new_key = input(f"\n{Colors.GREEN}Key{Colors.END} > ").strip()
+            except EOFError:
+                new_key = ""
         
         if new_key:
             provider = detect_provider(new_key)
