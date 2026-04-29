@@ -3,6 +3,8 @@
 import sys
 import os
 import signal
+import tty
+import termios
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -14,33 +16,99 @@ from config import (load_config, save_config, load_state, get_relevant_learnings
 
 
 def print_banner():
-    banner = f"""
-{Colors.GRAY}╔══════════════════════════════════════════════════════════════════╗
-║  {Colors.WHITE}  ____  _      _     ____                        _                 {Colors.GRAY}║
-║  {Colors.WHITE} |  _ \\| |    | |   / ___| _ __ ___  ___ ___ | | __              {Colors.GRAY}║
-║  {Colors.WHITE} | |_) | |    | |   \\___ \\| '__/ _ \\/ __/ __| |/ /              {Colors.GRAY}║
-║  {Colors.WHITE} |  __/| |____| |    ___) | | |  __/\\__ \\ (__|   <               {Colors.GRAY}║
-║  {Colors.WHITE} |_|   |______|_|   |____/|_|  \\___||___/\\___|_|\\_\\              {Colors.GRAY}║
-║                                                                    ║
-║  {Colors.BLUE}Self-Learning AI Agent • Vision • Voice • Telegram   {Colors.GRAY}║
-╚══════════════════════════════════════════════════════════════════════════╝{Colors.END}
-"""
-    print(banner)
+    print(f"""
+{Colors.GRAY}╭──────────────────────────────────────{Colors.CYAN}╮
+{Colors.GRAY}│{Colors.CYAN}   ██████╗ ███████╗ ██████╗        {Colors.GRAY}│
+{Colors.GRAY}│{Colors.CYAN}   ██╔══██╗██╔════╝██╔═══██╗       {Colors.GRAY}│
+{Colors.GRAY}│{Colors.CYAN}   ██████╔╝╚█████╗ ██║   ██║       {Colors.GRAY}│
+{Colors.GRAY}│{Colors.CYAN}   ██╔══██╗ ╚═══██║██║   ██║       {Colors.GRAY}│
+{Colors.GRAY}│{Colors.CYAN}   ██║  ██║██████╗ ╚██████╔╝       {Colors.GRAY}│
+{Colors.GRAY}│{Colors.CYAN}   ╚═╝  ╚═╝╚════╝  ╚═════╝        {Colors.GRAY}│
+{Colors.GRAY}╰──────────────────────────────────────{Colors.CYAN}╯
+{Colors.BLUE} Self-Learning AI • Vision • Voice • Telegram{Colors.END}
+""")
+
+
+def get_key():
+    """Get arrow key input"""
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(sys.stdin.fileno())
+        ch = sys.stdin.read(1)
+        if ch == '\x1b':
+            ch2 = sys.stdin.read(1)
+            if ch2 == '[':
+                ch3 = sys.stdin.read(1)
+                if ch3 == 'A':
+                    return 'UP'
+                elif ch3 == 'B':
+                    return 'DOWN'
+                elif ch3 == 'C':
+                    return 'RIGHT'
+                elif ch3 == 'D':
+                    return 'LEFT'
+        return ''
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def select_model_arrows(models: dict, current: str) -> str:
+    """Model selection with arrow keys"""
+    model_list = list(models.keys())
+    if not model_list:
+        return current
+    
+    current_index = model_list.index(current) if current in model_list else 0
+    
+    print(f"\n{Colors.CYAN}Use ↑↓ arrows to select, ENTER to confirm:{Colors.END}\n")
+    
+    while True:
+        # Clear previous lines
+        for _ in range(len(model_list) + 2):
+            sys.stdout.write('\033[F')
+        
+        print(f"\n{Colors.CYAN}Use ↑↓ arrows, ENTER:{Colors.END}\n")
+        
+        for i, key in enumerate(model_list):
+            info = models[key]
+            marker = "→" if i == current_index else " "
+            name = info.get('name', key)[:25]
+            free = f" {Colors.GREEN}[FREE]{Colors.END}" if info.get('free') else ""
+            
+            if i == current_index:
+                print(f"{Colors.CYAN}{marker} {key:15} {name}{free}{Colors.END}")
+            else:
+                print(f"  {Colors.GRAY}{key:15} {Colors.DIM}{name}{free}{Colors.END}")
+        
+        key = get_key()
+        
+        if key == 'UP':
+            current_index = (current_index - 1) % len(model_list)
+        elif key == 'DOWN':
+            current_index = (current_index + 1) % len(model_list)
+        elif key == '':
+            # Enter key
+            break
+        
+        import time
+        time.sleep(0.05)
+    
+    return model_list[current_index]
 
 
 def check_setup() -> str:
-    """Initial setup and model selection"""
-    print(f"\n{Colors.CYAN}Checking configuration...{Colors.END}")
+    """Initial setup"""
+    print(f"\n{Colors.CYAN}Checking...{Colors.END}")
     
     api_key = check_api_key()
     ollama = check_ollama()
     
     if not api_key and not ollama:
-        print(f"\n{Colors.RED}⚠ No API key detected{Colors.END}")
         print(f"\n{Colors.YELLOW}Enter API key:{Colors.END}")
-        print(f"{Colors.GRAY}(OpenRouter, OpenAI, or Anthropic){Colors.END}")
+        print(f"{Colors.DIM}(OpenRouter/OpenAI/Anthropic){Colors.END}")
         
-        new_key = input(f"\n{Colors.GREEN}API Key{Colors.GRAY}:{Colors.END} ").strip()
+        new_key = input(f"\n{Colors.GREEN}Key{Colors.END} > ").strip()
         
         if new_key:
             provider = detect_provider(new_key)
@@ -48,45 +116,44 @@ def check_setup() -> str:
             config["api_key"] = new_key
             config["provider"] = provider
             save_config(config)
-            api_key = new_key
             print(f"{Colors.GREEN}✓ Saved ({provider}){Colors.END}\n")
     
     if api_key:
         provider = detect_provider(api_key)
         print(f"{Colors.GREEN}✓ {get_provider_info(provider)['name']}{Colors.END}")
     
-    if ollama:
-        print(f"{Colors.GREEN}✓ Ollama running{Colors.END}")
-    
-    print(f"\n{Colors.CYAN}Fetching models...{Colors.END}")
+    print(f"\n{Colors.CYAN}Loading models...{Colors.END}")
     models = fetch_models(api_key, detect_provider(api_key))
     
     if not models:
-        print(f"{Colors.YELLOW}No models found{Colors.END}")
+        print(f"{Colors.RED}No models found{Colors.END}")
         return ""
     
-    print(f"\n{Colors.CYAN}Available Models ({len(models)}):{Colors.END}")
+    print(f"\n{Colors.CYAN}Available:{Colors.END} {len(models)} models")
     
-    free_models = [(k, v) for k, v in models.items() if v.get("free")]
-    paid_models = [(k, v) for k, v in models.items() if not v.get("free")]
+    # Show models nicely
+    free_models = [(k, v) for k, v in models.items() if v.get('free')]
+    paid_models = [(k, v) for k, v in models.items() if not v.get('free')]
     
-    for key, info in free_models[:8]:
-        print(f"  {Colors.GREEN}{key:15}{Colors.END} {info['name'][:20]} [FREE]")
+    print(f"\n{Colors.CYAN}═══ FREE Models ═══{Colors.END}")
+    for key, info in free_models[:6]:
+        print(f"  {Colors.GREEN}•{Colors.END} {key}")
     
-    for key, info in paid_models[:5]:
-        print(f"  {Colors.BLUE}{key:15}{Colors.END} {info['name'][:20]}")
+    print(f"\n{Colors.CYAN}═══ Paid Models ═══{Colors.END}")
+    for key, info in paid_models[:4]:
+        print(f"  {Colors.BLUE}•{Colors.END} {key}")
     
     current = load_config().get("model", "")
-    print(f"\n{Colors.CYAN}Current:{Colors.END} {current or 'auto'}")
     
-    choice = input(f"\n{Colors.GREEN}Select{Colors.GRAY}(enter){Colors.END}: ").strip()
+    print(f"\n{Colors.CYAN}Use arrow keys to select:{Colors.END}")
+    choice = select_model_arrows(models, current) if current else list(models.keys())[0]
     
     if choice and choice in models:
         config = load_config()
         config["model"] = choice
         config["model_id"] = models[choice].get("id", choice)
         save_config(config)
-        print(f"{Colors.GREEN}✓ {choice}{Colors.END}")
+        print(f"\n{Colors.GREEN}✓ Selected: {choice}{Colors.END}")
         return choice
     
     return current
@@ -102,17 +169,17 @@ def main():
     print_banner()
     
     print(f"  {Colors.GRAY}Provider:{Colors.END} {agent.provider}")
-    print(f"  {Colors.GRAY}Model:{Colors.END} {agent.model_id}")
+    print(f"  {Colors.GRAY}Model:{Colors.END} {agent.model_id[:25]}...")
     
     if agent.conversation:
-        print(f"\n{Colors.YELLOW}↻ Resuming ({len(agent.conversation)} messages){Colors.END}")
+        print(f"\n{Colors.YELLOW}↻ Resume: {len(agent.conversation)} msgs{Colors.END}")
     
     print()
+    print(f"{Colors.CYAN}Type /help for commands{Colors.END}\n")
     
-    # Main loop
     while True:
         try:
-            user_input = input(f"{Colors.GRAY}┌─:{Colors.END}{Colors.GREEN}You{Colors.GRAY}:─>{Colors.END} ").strip()
+            user_input = input(f"{Colors.GREEN}> {Colors.END}").strip()
             
             if not user_input:
                 continue
@@ -121,19 +188,14 @@ def main():
                 handle_command(user_input, agent)
                 continue
             
-            print()
-            
-            # Think briefly
-            print(f"{Emoji.THINKING} Thinking...")
+            print(f"\n{Emoji.THINKING} Thinking...")
             response = agent.chat(user_input)
             
-            # Show response
             print(response)
             
-            # Show tokens
             tokens = agent.get_token_display()
             if tokens:
-                print(f"  {Colors.GRAY}[{tokens}]{Colors.END}")
+                print(f"  {Colors.DIM}[{tokens}]{Colors.END}")
             
             print()
             
@@ -149,19 +211,20 @@ def handle_command(cmd: str, agent: Ever1Agent):
     
     if cmd_clean == "/help":
         print(f"""
-{Emoji.CODE} /exec <code>  - Run code
-{Emoji.FILE} /read <path> - Read file
-{Emoji.FILE} /write <path>=<content> - Write file
-{Emoji.FILE} /ls <dir>   - List files
-{Emoji.VISION} /vision <path> - Analyze image
-{Emoji.SPEAK} /speak <text> - Text to speech
-{Emoji.CODE} /clear     - Clear history
-{Emoji.CODE} /history  - View history
-{Emoji.CODE} /models   - List models
-{Emoji.CODE} /model <name> - Switch model
-{Emoji.CODE} /learn    - Show learnings
-{Emoji.CODE} /telegram - Setup Telegram
-{Emoji.CODE} /quit     - Exit
+{Emoji.CODE} Commands:
+  /exec <code> - Run code
+  /read <path> - Read file  
+  /write <path>=<content> - Write file
+  /ls <dir>   - List files
+  /vision <path> - Analyze image
+  /speak <text> - Text to speech
+  /clear     - Clear history
+  /history  - View history
+  /models   - List models
+  /model <name> - Switch model
+  /learn    - Show learnings
+  /telegram - Setup Telegram
+  /quit     - Exit
 """)
     
     elif cmd_clean == "/clear":
@@ -180,11 +243,9 @@ def handle_command(cmd: str, agent: Ever1Agent):
             return
         
         print(f"\n{Colors.CYAN}Models ({len(models)}):{Colors.END}")
-        for key, info in list(models.items())[:20]:
-            current = " ←" if key == agent.model_key else ""
-            free = f" {Colors.GREEN}[FREE]{Colors.END}" if info.get("free") else ""
-            vision = f" {Colors.CYAN}[Vision]{Colors.END}" if info.get("vision") else ""
-            print(f"  {Colors.BLUE}{key}{Colors.END}{free}{vision}{current}")
+        
+        # Use arrow selection
+        select_model_arrows(models, agent.model_key)
     
     elif cmd_clean.startswith("/model "):
         key = cmd[7:].strip()
@@ -196,12 +257,8 @@ def handle_command(cmd: str, agent: Ever1Agent):
     
     elif "/telegram" in cmd_clean:
         print(f"\n{Colors.CYAN}Telegram Setup:{Colors.END}")
-        print("1. Create bot: @BotFather on Telegram")
-        print("2. Get bot token")
-        print("3. Start chat with bot to get chat_id")
-        
-        bot_token = input(f"{Colors.GREEN}Bot Token{Colors.GRAY}:{Colors.END} ").strip()
-        chat_id = input(f"{Colors.GREEN}Chat ID{Colors.GRAY}:{Colors.END} ").strip()
+        bot_token = input(f"{Colors.GREEN}Bot Token{Colors.END} > ").strip()
+        chat_id = input(f"{Colors.GREEN}Chat ID{Colors.END} > ").strip()
         
         if bot_token and chat_id:
             config = load_config()
