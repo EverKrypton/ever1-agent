@@ -1,46 +1,78 @@
 #!/bin/bash
-# Ever-1 Agent - Direct Install
+# Ever-1 Agent - Direct Install (Termux optimized)
 # Run: curl -sL https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/install.sh | bash
 
 set -e
 
-BOLD='\033[1m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-END='\033[0m'
+# Colors
+R='\033[0m' G='\033[0;32m' B='\033[0;34m' C='\033[0;36m'
 
-echo -e "${BOLD}╔═══════════════════════════════════════╗${END}"
-echo -e "${BOLD}║     ${GREEN}Ever-1 AI Agent${CYAN} Installer     ${BOLD}║${END}"
-echo -e "${BOLD}╚═══════════════════════════════════════╝${END}"
+echo -e "${G}╔═══════════════════════════════════════╗${R}"
+echo -e "${G}║     Ever-1 AI Agent Installer     ║${R}"
+echo -e "${G}╚═══════════════════════════════════════╝${R}"
 echo
 
 DIR="$HOME/.ever1-agent"
-BIN="$HOME/.local/bin"
-mkdir -p "$DIR" "$BIN"
+mkdir -p "$DIR"
 
-echo -e "${CYAN}Installing...${END}"
+echo -e "${C}Installing files...${R}"
+echo -ne "${B}[${G}"
 
-# Download files
-for f in main.py client.py config.py tools.py; do
-    curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/$f" -o "$DIR/$f" --progress-bar 2>/dev/null
+# Download 4 core files with progress
+FILES="main.py client.py config.py tools.py"
+COUNT=0
+for f in $FILES; do
+    COUNT=$((COUNT + 1))
+    PROG=$((COUNT * 25))
+    BAR=$((PROG / 5))
+    echo -ne "\r${B}[${G}"
+    for i in $(seq 1 $BAR); do echo -n "█"; done
+    for i in $(seq $BAR 20); do echo -n "░"; done
+    echo -ne "${B}] ${PROG}%${R}"
+    
+    curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/$f" -o "$DIR/$f"
 done
 
+echo -ne "\r${B}[${G}████████████████████${B}]100%${R}"
+echo -e "\n${G}✓ Files downloaded${R}"
+
 # Create everai command
+echo "Creating command..."
+mkdir -p "$HOME/.local/bin"
 echo '#!/bin/bash
 cd ~/.ever1-agent
-python3 main.py "$@"' > "$BIN/everai"
-chmod +x "$BIN/everai"
+python3 main.py' > "$HOME/.local/bin/everai"
+chmod +x "$HOME/.local/bin/everai"
 
-# For Termux - add to path differently
-if [ -d "$HOME/.termux" ]; then
-    echo '[ -d "$HOME/.local/bin" ] && export PATH="$PATH:$HOME/.local/bin"' >> ~/.bashrc 2>/dev/null
-    echo '[ -d "$HOME/.local/bin" ] && export PATH="$PATH:$HOME/.local/bin"' >> ~/.zshrc 2>/dev/null
+# Setup PATH for current session
+export PATH="$PATH:$HOME/.local/bin"
+
+# For future sessions - create bashrc/zshrc
+for SHELL_RC in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    if [ -f "$SHELL_RC" ]; then
+        if ! grep -q ".local/bin" "$SHELL_RC" 2>/dev/null; then
+            echo 'export PATH="$PATH:$HOME/.local/bin"' >> "$SHELL_RC"
+        fi
+    else
+        echo 'export PATH="$PATH:$HOME/.local/bin"' > "$SHELL_RC"
+    fi
+done
+
+# If no shell rc exists, create one
+if [ ! -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.zshrc" ]; then
+    echo 'export PATH="$PATH:$HOME/.local/bin"' > "$HOME/.bashrc"
 fi
 
+echo -e "${G}✓ Installation Complete!${R}"
 echo
-echo -e "${GREEN}✓ Installation Complete!${END}"
+echo -e "${B}Run: everai${R}"
+echo -e "${B}Or: python3 ~/.ever1-agent/main.py${R}"
 echo
-echo -e "Run: ${BLUE}everai${END}"
-echo -e "or: ${BLUE}python3 ~/.ever1-agent/main.py${END}"
+
+# Option to run directly
+read -p "Start Ever-1 now? (y/n): " -n 1 -r
 echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    cd "$DIR"
+    python3 main.py
+fi
