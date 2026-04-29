@@ -16,16 +16,11 @@ from config import (load_config, save_config, load_state, get_relevant_learnings
 
 
 def print_banner():
-    print(f"""
-{Colors.GRAY}╭──────────────────────────────────────{Colors.CYAN}╮
-{Colors.GRAY}│{Colors.CYAN}   ██████╗ ███████╗ ██████╗        {Colors.GRAY}│
-{Colors.GRAY}│{Colors.CYAN}   ██╔══██╗██╔════╝██╔═══██╗       {Colors.GRAY}│
-{Colors.GRAY}│{Colors.CYAN}   ██████╔╝╚█████╗ ██║   ██║       {Colors.GRAY}│
-{Colors.GRAY}│{Colors.CYAN}   ██╔══██╗ ╚═══██║██║   ██║       {Colors.GRAY}│
-{Colors.GRAY}│{Colors.CYAN}   ██║  ██║██████╗ ╚██████╔╝       {Colors.GRAY}│
-{Colors.GRAY}│{Colors.CYAN}   ╚═╝  ╚═╝╚════╝  ╚═════╝        {Colors.GRAY}│
-{Colors.GRAY}╰──────────────────────────────────────{Colors.CYAN}╯
-{Colors.BLUE} Self-Learning AI • Vision • Voice • Telegram{Colors.END}
+    print("""
+╔═══════════════════════════════╗
+║      EVER-1 AI Agent          ║
+║  Self-Learning AI             ║
+╚═══════════════════════════════╝
 """)
 
 
@@ -104,14 +99,12 @@ def check_setup() -> str:
     api_key = check_api_key()
     ollama = check_ollama()
     
-    # Check for existing config with API key
     if not api_key:
         config = load_config()
         api_key = config.get("api_key", "")
     
     if not api_key and not ollama:
         print(f"\n{Colors.YELLOW}No API key found{Colors.END}")
-        print(f"Set OPENROUTER_API_KEY env or edit config.json")
     
     if api_key:
         provider = detect_provider(api_key)
@@ -124,32 +117,35 @@ def check_setup() -> str:
         print(f"{Colors.RED}No models found{Colors.END}")
         return ""
     
-    # Auto-select CLAUDE as default (best model)
+    # Auto-select CLAUDE OPUS 4.7 (best model)
     config = load_config()
     
-    # Try claude first
+    # Look for explicit claude-opus model
     for key, info in models.items():
-        if "claude" in key.lower() and "opus" in key.lower():
+        model_id = info.get("id", "")
+        if "claude-opus-4.7" in model_id.lower():
             config["model"] = key
-            config["model_id"] = info.get("id", key)
+            config["model_id"] = model_id
             save_config(config)
             print(f"{Colors.GREEN}✓ Model: {key}{Colors.END}")
             return key
     
-    # Try GPT-4o as second choice
+    # Fallback to any opus model
     for key, info in models.items():
-        if "gpt-4o" in key.lower():
+        model_id = info.get("id", "")
+        if "claude-opus" in model_id.lower():
             config["model"] = key
-            config["model_id"] = info.get("id", key)
+            config["model_id"] = model_id
             save_config(config)
             print(f"{Colors.GREEN}✓ Model: {key}{Colors.END}")
             return key
     
-    # Try any clausal as third
+    # Fallback to gpt-4o
     for key, info in models.items():
-        if "claude" in key.lower():
+        model_id = info.get("id", "")
+        if "gpt-4o" in model_id.lower():
             config["model"] = key
-            config["model_id"] = info.get("id", key)
+            config["model_id"] = model_id
             save_config(config)
             print(f"{Colors.GREEN}✓ Model: {key}{Colors.END}")
             return key
