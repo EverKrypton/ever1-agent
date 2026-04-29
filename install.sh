@@ -43,12 +43,15 @@ cd ~/.ever1-agent
 python3 main.py' > "$BIN/everai"
 chmod +x "$BIN/everai"
 
-# Termux default bin
-if [ -d "/data/data/com.termux/files/home/bin" ]; then
+TERMUX_PREFIX="/data/data/com.termux/files/home"
+TERMUX_BIN="$TERMUX_PREFIX/bin"
+
+if [ -d "$TERMUX_PREFIX" ]; then
+    mkdir -p "$TERMUX_BIN"
     echo '#!/bin/bash
 cd ~/.ever1-agent
-python3 main.py' > /data/data/com.termux/files/home/bin/everai
-    chmod +x /data/data/com.termux/files/home/bin/everai
+python3 main.py' > "$TERMUX_BIN/everai"
+    chmod +x "$TERMUX_BIN/everai"
 fi
 
 echo ""

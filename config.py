@@ -15,6 +15,14 @@ QUEUE_FILE = Path.home() / ".ever1-agent" / "queue.json"
 SESSION_FILE = Path.home() / ".ever1-agent" / "session.md"
 
 PROVIDERS = {
+    "ollama": {
+        "name": "Ollama",
+        "url": "http://localhost:11434",
+        "models_url": "http://localhost:11434/api/tags",
+        "chat_endpoint": "/v1/chat/completions",
+        "vision_models": [],
+        "detect": ["ollama"],
+    },
     "openrouter": {
         "name": "OpenRouter",
         "url": "https://openrouter.ai/api/v1",
@@ -73,10 +81,14 @@ CAPABILITIES:
 Your goal: Be the best AI agent possible.""",
 }
 
-MODELS_CACHE = {}
+MODELS_CACHE: dict = {}
 
 
 def detect_provider(api_key: str) -> str:
+    config = load_config()
+    provider = config.get("provider", "")
+    if provider == "ollama":
+        return "ollama"
     if not api_key:
         return "openrouter"
     for provider, info in PROVIDERS.items():
@@ -215,6 +227,9 @@ def get_chat_url(provider: str) -> str:
     
     if provider == "anthropic":
         return f"{base_url}/v1/messages"
+    
+    if provider == "ollama":
+        return f"{base_url}/v1/chat/completions"
     
     return f"{base_url}{endpoint}"
 

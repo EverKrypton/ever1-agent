@@ -46,7 +46,6 @@ class Emoji:
     VISION = "🖼️"
     CODE = "⚡"
     FILE = "📄"
-    VISION = "🖼️"
 
 
 class ActionIndicator:
@@ -370,11 +369,15 @@ class Ever1Agent:
         }
         
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://ever1.local",
-            "X-Title": "Ever-1"
         }
+        
+        if self.provider == "ollama":
+            chat_url = self.config.get("api_url", "http://localhost:11434/v1/chat/completions")
+        else:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["HTTP-Referer"] = "https://ever1.local"
+            headers["X-Title"] = "Ever-1"
         
         try:
             req = Request(chat_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
@@ -384,7 +387,7 @@ class Ever1Agent:
             with urlopen(req, timeout=120) as response:
                 for line in response:
                     if self.interrupted:
-                        return "⚠ Interrupted"
+                        return "Interrupted"
                     
                     line = line.decode("utf-8")
                     if line.startswith("data: "):
@@ -393,25 +396,29 @@ class Ever1Agent:
                             break
                         try:
                             data = json.loads(data_str)
-                            delta = data.get("choices", [{}])[0].get("delta", {})
-                            content = delta.get("content", "")
+                            if self.provider == "ollama":
+                                content = data.get("message", {}).get("content", "")
+                            else:
+                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
                             if content:
                                 response_text += content
-                            
-                            usage = data.get("usage", {})
-                            self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
                         except:
                             continue
             
             if not response_text:
-                # Non-streaming fallback
+                payload["stream"] = False
                 req = Request(chat_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
                 with urlopen(req, timeout=60) as response:
                     result = json.loads(response.read().decode("utf-8"))
-                    response_text = result["choices"][0]["message"]["content"]
-                    
-                    usage = result.get("usage", {})
-                    self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+                    if self.provider == "ollama":
+                        response_text = result.get("message", {}).get("content", "")
+                    else:
+                        response_text = result["choices"][0]["message"]["content"]
+            
+            if self.provider != "ollama":
+                usage = result.get("usage", {})
+                self.tokens.update(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
             
             evaluation = self._self_evaluate(response_text)
             add_learning("chat", user_input[:100], evaluation["score"] > 6, evaluation["score"], evaluation["notes"])

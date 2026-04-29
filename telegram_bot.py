@@ -296,49 +296,51 @@ _Owner only - End-to-end encrypted_
         response = self.agent.chat(text)
         return response
     
-    def process_callback(self, callback_data: str, message_id: int) -> str:
+    def process_callback(self, callback_data: str, message_id: int, callback_id: str = None) -> str:
         """Process callback from inline buttons"""
-        cb = callback_data.split("_")
+        parts = callback_data.split("_")
         
-        if len(cb) >= 2 and cb[0] == "task":
-            task_id = "_".join(cb[1:])
+        if len(parts) >= 2 and parts[0] == "task":
+            task_id = "_".join(parts[1:])
             
             if task_id in self.pending_tasks:
                 task = self.pending_tasks[task_id]
                 
-                if cb[0] == "task" and len(cb) >= 2:
-                    action = cb[1]
+                if len(parts) >= 2:
+                    action = parts[1]
                     
                     if action == "confirm":
                         self.send_message("✅ Task confirmed, processing...")
-                        # Process the task
                         if task["type"] == "search":
                             response = self.agent.chat(task["query"])
                             self.send_message(response)
                         
                         del self.pending_tasks[task_id]
-                        self.answer_callback(f"{cb[1]}_{task_id}", "Confirmed!")
+                        if callback_id:
+                            self.answer_callback(callback_id, "Confirmed!")
                         return "✅ Done"
                     
                     elif action == "reject":
                         del self.pending_tasks[task_id]
-                        self.answer_callback(f"{cb[1]}_{task_id}", "Rejected")
+                        if callback_id:
+                            self.answer_callback(callback_id, "Rejected")
                         return "❌ Rejected"
                     
                     elif action == "modify":
                         self.send_message("📝 How would you like to modify this task?")
-                        self.answer_callback(f"{cb[1]}_{task_id}", "Modify requested")
+                        if callback_id:
+                            self.answer_callback(callback_id, "Modify requested")
                         return "📝 Waiting for modification"
         
-        elif len(cb) >= 2 and cb[0] == "model":
-            new_model = "_".join(cb[1:])
+        elif len(parts) >= 2 and parts[0] == "model":
+            new_model = "_".join(parts[1:])
             if self.agent:
                 result = self.agent.switch_model(new_model)
                 self.send_message(result)
             return None
         
-        elif cb[0] == "cmd":
-            cmd = "_".join(cb[1:])
+        elif parts[0] == "cmd":
+            cmd = "_".join(parts[1:])
             return self.process_commands(f"/{cmd}")
         
         return None
@@ -384,7 +386,7 @@ Send /help for commands
                             msg_id = callback.get("message", {}).get("message_id", 0)
                             cb_id = callback.get("id", "")
                             
-                            self.process_callback(cb_data, msg_id)
+                            self.process_callback(cb_data, msg_id, cb_id)
                             continue
                         
                         # Regular messages

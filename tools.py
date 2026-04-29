@@ -97,7 +97,7 @@ class ToolExecutor:
             else:
                 files = list(p.glob(f"*{pattern}*"))
             
-            result["files"] = [f"{'📁 ' if f.is_dir() else '📄 '}{f.name}" for f in files[:30]]
+            result["output"] = [f"{'📁 ' if f.is_dir() else '📄 '}{f.name}" for f in files[:30]]
             result["success"] = True
         except Exception as e:
             result["error"] = str(e)
