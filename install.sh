@@ -1,83 +1,80 @@
 #!/bin/bash
-# Ever-1 Agent Installer - Hidden folder installation
+# Ever-1 Agent - Direct Install from URL
+# Run: bash <(curl -L https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/install.sh)
+# Or: curl -sL https://bit.ly/ever1ai | bash
 
 set -e
 
-AGENT_NAME="ever1"
-INSTALL_DIR="$HOME/.$AGENT_NAME-agent"
-BIN_DIR="$HOME/.local/bin"
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+END='\033[0m'
 
-echo "╔═══════════════════════════════════════╗"
-echo "║   Ever-1 AI Agent Installer       ║"
-echo "╚═══════════════════════════════════════╝"
-echo
+print_banner() {
+    echo -e "
+${CYAN}╔═══════════════════════════════════════╗
+${CYAN}║   ${GREEN}Ever-1 AI Agent${CYAN} Installer     ║
+${CYAN}╚═══════════════════════════════════════╝${END}
+"
+}
+
+progress() {
+    echo -ne "${BLUE}[${GREEN}"
+    for i in $(seq 1 $1); do echo -n "█"; done
+    for i in $(seq $1 20); do echo -n "░"; done
+    echo -ne "${BLUE}]${END} $2%\r"
+}
+
+print_banner
 
 # Check Python
+echo -e "${CYAN}Checking Python...${END}"
+progress 5 5
 if ! command -v python3 &> /dev/null; then
-    echo "Installing Python..."
-    if command -v apt &> /dev/null; then
-        sudo apt install -y python3 python3-pip
-    elif command -v pkg &> /dev/null; then
-        pkg install -y python
+    if command -v pkg &> /dev/null; then
+        pkg install -y python >/dev/null 2>&1
     fi
 fi
+progress 10 10
 
-# Create directory
-mkdir -p "$INSTALL_DIR"
-mkdir -p "$BIN_DIR"
+# Setup dirs
+INSTALL_DIR="$HOME/.ever1-agent"
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
-# Clone repo only if not exists
-if [ ! -d "$INSTALL_DIR/.git" ]; then
-    echo "Downloading Ever-1..."
-    git clone https://github.com/EverKrypton/ever1-agent.git "$INSTALL_DIR"
-else
-    echo "Updating Ever-1..."
-    cd "$INSTALL_DIR"
-    git pull origin main 2>/dev/null || true
-fi
+# Download files
+echo -e "\n${CYAN}Downloading Ever-1...${END}"
+FILES="main.py client.py config.py tools.py telegram_bot.py"
 
-# Install dependencies
-echo "Installing..."
 cd "$INSTALL_DIR"
-pip install -q requests 2>/dev/null || true
 
-# Create everai CLI script (in hidden folder)
+for file in $FILES; do
+    progress 20 20
+    curl -sL "https://raw.githubusercontent.com/EverKrypton/ever1-agent/main/$file" -o "$file"
+    progress 50 50
+done
+progress 80 80
+
+# Install deps
+pip install -q requests 2>/dev/null || true
+progress 95 95
+
+# Create everai command
 cat > "$BIN_DIR/everai" << 'EOF'
 #!/bin/bash
-DIR="$HOME/.ever1-agent"
-cd "$DIR"
+cd "$HOME/.ever1-agent"
 python3 main.py "$@"
 EOF
-
 chmod +x "$BIN_DIR/everai"
 
-# Update PATH in bashrc
-BASHRC="$HOME/.bashrc"
-if [ -f "$BASHRC" ] && ! grep -q ".local/bin" "$BASHRC"; then
-    echo 'export PATH="$PATH:$HOME/.local/bin"' >> "$BASHRC"
-fi
+# Update PATH
+for rc in ~/.bashrc ~/.zshrc ~/.profile; do
+    [ -f "$rc" ] && ! grep -q ".local/bin" "$rc" && echo 'export PATH="$PATH:$HOME/.local/bin"' >> "$rc"
+done
 
-# Also check zshrc
-ZSHRC="$HOME/.zshrc"
-if [ -f "$ZSHRC" ] && ! grep -q ".local/bin" "$ZSHRC"; then
-    echo 'export PATH="$PATH:$HOME/.local/bin"' >> "$ZSHRC"
-fi
-
-echo
-echo "╔═══════════════════════════════════════╗"
-echo "║   ✓ Installation Complete!         ║"
-echo "╚═══════════════════════════════════════╝"
-echo
-echo "To start Ever-1:"
-echo "  source ~/.bashrc  # (first time only)"
-echo "  everai"
-echo "  OR: python3 ~/.ever1-agent/main.py"
-echo
-
-# Ask to start
-read -p "Start Ever-1 now? (y/n): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    cd "$INSTALL_DIR"
-    python3 main.py
-fi
+progress 100 100
+echo -e "\n\n${GREEN}✓ Installation Complete!${END}"
+echo -e "${CYAN}Run: everai${END} (or source ~/.bashrc first time)"
+echo -e "${CYAN}Or: python3 ~/.ever1-agent/main.py${END}"
