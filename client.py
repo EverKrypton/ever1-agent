@@ -464,11 +464,16 @@ class Ever1Agent:
     def save_state_on_quit(self):
         self._save_state()
         
-        # Save session
-        with open(SESSION_FILE, "w") as f:
-            f.write(f"# Ever-1 Session\n\n")
-            f.write(f"**Provider:** {self.provider}\n")
-            f.write(f"**Model:** {self.model_id}\n")
-            f.write(f"**Tokens:** {self.get_token_display()}\n")
-            if self.conversation:
-                f.write(f"\n**Last:** {self.conversation[-1][0][:50]}...\n")
+        # Save session - define path inline to avoid import issues
+        from pathlib import Path
+        session_path = Path.home() / ".ever1-agent" / "session.md"
+        try:
+            with open(session_path, "w") as f:
+                f.write(f"# Ever-1 Session\n\n")
+                f.write(f"**Provider:** {self.provider}\n")
+                f.write(f"**Model:** {self.model_id}\n")
+                f.write(f"**Tokens:** {self.get_token_display()}\n")
+                if self.conversation:
+                    f.write(f"\n**Last:** {self.conversation[-1][0][:50]}...\n")
+        except:
+            pass  # Ignore save errors
