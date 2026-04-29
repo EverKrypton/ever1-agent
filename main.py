@@ -2,12 +2,14 @@
 import sys
 import os
 import signal
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from client import Ever1Agent, Colors
-from config import (load_config, save_config, load_state, OPENROUTER_MODELS, get_relevant_learnings,
-                   load_queue, add_to_queue, clear_queue, get_model_info)
+from config import (load_config, save_config, load_state, get_relevant_learnings,
+                   load_queue, add_to_queue, clear_queue, get_model_info, 
+                   check_api_key, check_ollama, get_available_models, DEFAULT_MODELS, fetch_models_from_api)
 
 
 def print_banner():
@@ -20,22 +22,69 @@ def print_banner():
 ║  {Colors.WHITE} |_|   |______|_|   |____/|_|  \\___||___/\\___|_|\\_\\              {Colors.GRAY}║
 ║                                                                    ║
 ║  {Colors.BLUE}Self-Learning AI Agent • Autonomous • Secure                    {Colors.GRAY}║
-╚══════════════════════════════════════════════════════════════════════════╝{Colors.END}
+╚══════════════════════════════════════════════════════════════════╝{Colors.END}
 """
     print(banner)
 
 
-def print_input_box():
-    line = "─" * 50
-    print(f"{Colors.GRAY}┌{line}┐{Colors.END}")
-    print(f"{Colors.GRAY}│{Colors.END}" + " " * 48 + f"{Colors.GRAY}│{Colors.END}")
+def check_and_setup() -> str:
+    """Check API key or Ollama, show models, return model choice"""
+    print(f"\n{Colors.CYAN}Checking configuration...{Colors.END}")
     
+    api_key = check_api_key()
+    ollama_running = check_ollama()
+    
+    if not api_key and not ollama_running:
+        print(f"\n{Colors.RED}⚠ No API key detected and Ollama not running{Colors.END}")
+        print(f"\n{Colors.YELLOW}Please enter your OpenRouter API key:{Colors.END}")
+        print(f"{Colors.GRAY}(Get free key at https://openrouter.ai/keys){Colors.END}")
+        
+        new_key = input(f"\n{Colors.GREEN}API Key{Colors.GRAY}:{Colors.END} ").strip()
+        
+        if new_key:
+            config = load_config()
+            config["api_key"] = new_key
+            save_config(config)
+            api_key = new_key
+            print(f"{Colors.GREEN}✓ API key saved{Colors.END}\n")
+    
+    if api_key:
+        print(f"{Colors.GREEN}✓ API key configured{Colors.END}")
+    
+    if ollama_running:
+        print(f"{Colors.GREEN}✓ Ollama is running{Colors.END}")
+    
+    print(f"\n{Colors.CYAN}Fetching models from API...{Colors.END}")
+    models = get_available_models(api_key)
+    
+    print(f"\n{Colors.CYAN}Available Models:{Colors.END}")
+    
+    for key, info in list(models.items())[:20]:
+        price_in = "FREE" if info["price_input"] == 0 else f"${info['price_input']:.5f}/1k"
+        price_out = "FREE" if info["price_output"] == 0 else f"${info['price_output']:.5f}/1k"
+        free_tag = f" {Colors.GREEN}[FREE]{Colors.END}" if info.get("free") else ""
+        print(f"  {Colors.BLUE}{key:15}{Colors.END} {info['name']:25} ({price_in}/{price_out}){free_tag}")
+    
+    current = load_config().get("model", "minimax")
+    print(f"\n{Colors.CYAN}Current model:{Colors.END} {Colors.WHITE}{current}{Colors.END}")
+    
+    choice = input(f"\n{Colors.GREEN}Select model{Colors.GRAY}({current}){Colors.END}: ").strip()
+    
+    if choice and choice in models:
+        config = load_config()
+        config["model"] = choice
+        save_config(config)
+        print(f"{Colors.GREEN}✓ Model set to {choice}{Colors.END}")
+        return choice
+    
+    return current
+
 
 def main():
-    signal.signal(signal.SIGINT, lambda s, f: (print(f"\n{Colors.GRAY}Esc pressed, exiting...{Colors.END}"), 
-                                         clean_exit()))
+    signal.signal(signal.SIGINT, lambda s, f: clean_exit())
     signal.signal(signal.SIGTSTP, lambda s, f: clean_exit())
     
+    model = check_and_setup()
     agent = Ever1Agent()
     
     print_banner()
@@ -48,19 +97,14 @@ def main():
     if token_info:
         print(f"  {Colors.GRAY}Session:{Colors.END} {token_info}")
     
-    warnings = []
-    if not agent.config.get("api_key") and not os.getenv("OPENROUTER_API_KEY"):
-        warnings.append("No API key set")
-    
-    if warnings:
-        print(f"  {Colors.YELLOW}⚠ {', '.join(warnings)}{Colors.END}")
-    
     print()
     
     state = load_state()
     if state.get("pending_tasks"):
         print(f"{Colors.YELLOW}⚠ You have pending tasks from last session{Colors.END}")
-        print(f"{Colors.GRAY}   Type /tasks to see them{Colors.END}\n")
+        for task in state["pending_tasks"][:3]:
+            print(f"  • {task.get('description', 'Task')}")
+        print()
     
     while True:
         try:
@@ -121,11 +165,6 @@ def handle_command(cmd: str, agent: Ever1Agent):
   {Colors.BLUE}/write <path>=<content>{Colors.END} - Write file
   {Colors.BLUE}/ls <dir>{Colors.END}   - List files
   {Colors.BLUE}/todo <list>{Colors.END} - Create todo list
-
-{Colors.CYAN}Tips:{Colors.END}
-  • Press {Colors.YELLOW}Ctrl+Z{Colors.END} to interrupt
-  • Add "queue" to add task to queue
-  • Use ! before command for quick access
 """)
     
     elif cmd_clean == "/clear":
@@ -142,40 +181,33 @@ def handle_command(cmd: str, agent: Ever1Agent):
         if task_desc:
             add_to_queue({"description": task_desc, "added": "now"})
             print(f"{Colors.GREEN}✓ Added to queue: {task_desc}{Colors.END}")
-        else:
-            print(f"{Colors.YELLOW}Usage: /queue <task description>{Colors.END}")
     
-    elif cmd_clean == "/model":
-        print(f"\n{Colors.CYAN}Current: {agent.model_info['name']}{Colors.END}")
-        print("Use /model <name> to switch")
-        print("Models available:")
-        for key, info in OPENROUTER_MODELS.items():
-            price = "FREE" if info["price_input"] == 0 else f"${info['price_input']}/1k"
-            print(f"  {Colors.BLUE}{key}{Colors.END}: {info['name']} ({price})")
+    elif cmd_clean == "/models":
+        api_key = check_api_key()
+        models = get_available_models(api_key)
+        
+        print(f"\n{Colors.CYAN}Available Models:{Colors.END}")
+        for key, info in list(models.items())[:20]:
+            price_in = "FREE" if info["price_input"] == 0 else f"${info['price_input']:.5f}/1k"
+            price_out = "FREE" if info["price_output"] == 0 else f"${info['price_output']:.5f}/1k"
+            current = " (current)" if key == agent.model_key else ""
+            free = f" {Colors.GREEN}[FREE]{Colors.END}" if info.get("free") else ""
+            print(f"  {Colors.BLUE}{key}{Colors.END}: {info['name']} ({price_in}/{price_out}){free}{current}")
     
     elif cmd_clean.startswith("/model "):
         model_key = cmd[7:].strip()
         if model_key in OPENROUTER_MODELS:
             agent.switch_model(model_key)
-            print(f"{Colors.GREEN}Model switched. Restart not needed.{Colors.END}")
         else:
             print(f"{Colors.RED}Unknown model: {model_key}{Colors.END}")
-            print("Use /models to see available")
     
-    elif cmd_clean == "/models":
-        print(f"\n{Colors.CYAN}Available Models:{Colors.END}")
-        for key, info in OPENROUTER_MODELS.items():
-            price_in = "FREE" if info["price_input"] == 0 else f"${info['price_input']}/1k"
-            price_out = "FREE" if info["price_output"] == 0 else f"${info['price_output']}/1k"
-            current = " {Colors.GREEN}●{Colors.END}" if key == agent.model_key else ""
-            print(f"  {Colors.BLUE}{key}{Colors.END}: {info['name']} ({price_in}/{price_out}){current}")
+    elif cmd_clean == "/model":
+        print(f"\n{Colors.CYAN}Current: {agent.model_info['name']}{Colors.END}")
+        print("Use /model <name> to switch")
     
     elif cmd_clean == "/learn":
         learnings = get_relevant_learnings()
-        if learnings:
-            print(f"\n{learnings}")
-        else:
-            print(f"{Colors.GRAY}No learnings yet{Colors.END}")
+        print(f"\n{learnings}" if learnings else f"{Colors.GRAY}No learnings yet{Colors.END}")
     
     elif cmd_clean == "/config":
         config = load_config()
@@ -183,12 +215,10 @@ def handle_command(cmd: str, agent: Ever1Agent):
         for k, v in config.items():
             if k == "api_key" and v:
                 print(f"  {k}: {'*' * 20}")
-            elif k == "system_prompt":
-                print(f"  {k}: (see file)")
             else:
                 print(f"  {k}: {v}")
     
-    elif cmd_clean in ["/quit", "/exit", "!/"]:
+    elif cmd_clean in ["/quit", "/exit"]:
         clean_exit(agent)
         sys.exit(0)
     

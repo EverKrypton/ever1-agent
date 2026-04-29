@@ -11,11 +11,13 @@ from urllib.error import HTTPError
 try:
     from config import (load_config, save_config, get_model_info, load_state, save_state,
                        load_memory, save_memory, add_learning, get_relevant_learnings,
-                       load_queue, get_next_task, add_to_queue, clear_queue, OPENROUTER_MODELS)
+                       load_queue, get_next_task, add_to_queue, clear_queue, 
+                       get_available_models, DEFAULT_MODELS)
 except ImportError:
     from .config import (load_config, save_config, get_model_info, load_state, save_state,
                         load_memory, save_memory, add_learning, get_relevant_learnings,
-                        load_queue, get_next_task, add_to_queue, clear_queue, OPENROUTER_MODELS)
+                        load_queue, get_next_task, add_to_queue, clear_queue,
+                        get_available_models, DEFAULT_MODELS)
 
 
 class Colors:
@@ -553,7 +555,10 @@ class Ever1Agent:
             print(f"{status} {task.get('description', f'Task {i+1}')}")
     
     def switch_model(self, model_key: str):
-        if model_key in OPENROUTER_MODELS:
+        from config import get_available_models, DEFAULT_MODELS
+        models = get_available_models()
+        
+        if model_key in models:
             from config import save_config
             config = load_config()
             config["model"] = model_key
